@@ -1,35 +1,18 @@
 from mcp.server.mcpserver import MCPServer
 
-from debugger import FakeDOSBoxDebugger
 from dosbox_client import DOSBoxClient, DOSBoxClientError
-from protocol import DebuggerError, error as protocol_error
+from protocol import error as protocol_error
 
 mcp = MCPServer(
     "DOSBox-X AI Debugger"
 )
 
-# Real debugger tools (get_debug_status/get_cpu_state/read_memory/
-# get_current_instruction/disassemble/write_memory/write_register/
-# set_breakpoint/delete_breakpoint/list_breakpoints/continue_execution/
-# pause_execution) talk to the actual running DOSBox-X instance through the
-# native AI bridge (dosbox-src/src/debug/debug_ai.cpp).
+# Every debugger tool talks to the actual running DOSBox-X instance through
+# the native AI bridge (dosbox-src/src/debug/debug_ai.cpp). FakeDOSBoxDebugger
+# (ai/debugger.py) is no longer wired into the MCP tool layer -- it remains
+# available for unit tests that don't require a live DOSBox-X instance
+# (tests/test_debugger.py).
 dosbox = DOSBoxClient()
-
-# step_into is not yet implemented by the native bridge (Phase 4D) and
-# still runs against the in-process fake, which also remains available for
-# unit tests (tests/test_debugger.py).
-fake_debugger = FakeDOSBoxDebugger()
-
-
-def _guarded(func, *args):
-    """Run a FakeDOSBoxDebugger call, turning DebuggerError into a
-    structured error response instead of letting an exception reach the
-    MCP client."""
-
-    try:
-        return func(*args)
-    except DebuggerError as e:
-        return protocol_error(e.code, e.message)
 
 
 def _guarded_native(func, *args):
@@ -64,9 +47,9 @@ def get_project_status() -> dict:
 
     return {
         "project": "DOSBox-X AI Debugger",
-        "phase": "P4C",
+        "phase": "P4D",
         "dosbox_bridge": f"native ({dosbox.host}:{dosbox.port})",
-        "debugger": "native+fake",
+        "debugger": "native",
         "mcp": "online",
     }
 
@@ -214,20 +197,38 @@ def pause_execution() -> dict:
     return _guarded_native(dosbox.pause_execution)
 
 
-# -- Not yet implemented by the native bridge (Phase 4D): still runs
-# against FakeDOSBoxDebugger so the MCP tool surface stays complete and
-# testable. --
-
-
 @mcp.tool()
 def step_into() -> dict:
     """
-    Execute exactly one instruction and return the new debug status. Not
-    yet backed by the native bridge (Phase 4D); runs against the in-process
-    fake debugger.
+    Execute exactly one guest instruction on the real, running DOSBox-X
+    instance via the native AI bridge -- the SAME transition the debugger
+    GUI's F11 ("trace into") key makes. Only valid while the debugger is
+    stopped; fails with ALREADY_RUNNING otherwise. Blocks until the real
+    DOSBox-X CPU decoder has genuinely executed the instruction and returns
+    a real debug status snapshot (location, instruction, registers,
+    segments, flags) taken after it stopped again.
     """
 
-    return _guarded(fake_debugger.step_into)
+    return _guarded_native(dosbox.step_into)
+
+
+@mcp.tool()
+def step_over() -> dict:
+    """
+    Step over the current instruction on the real, running DOSBox-X
+    instance via the native AI bridge -- the SAME transition the debugger
+    GUI's F10 ("step over") key makes. For an ordinary instruction this
+    behaves exactly like step_into(). For a call/int/loop/rep instruction,
+    the real subroutine/interrupt/loop runs to completion (using DOSBox-X's
+    own one-shot-breakpoint mechanism) and this call blocks until execution
+    stops again at the instruction after it. Only valid while the debugger
+    is stopped; fails with ALREADY_RUNNING otherwise. Fails with
+    EXECUTION_TIMEOUT if the stepped-over instruction does not return
+    within the timeout -- call get_debug_status() afterward to check
+    whether it completed shortly after.
+    """
+
+    return _guarded_native(dosbox.step_over)
 
 
 if __name__ == "__main__":

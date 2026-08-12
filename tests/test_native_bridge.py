@@ -231,11 +231,52 @@ def run(host, port):
             resp.get("error", {}).get("code") == "ALREADY_STOPPED")
     print()
 
-    # -- execution.continue / execution.pause round trip (Phase 4C) ------
+    # -- execution.step_into (Phase 4D) -----------------------------------
     # NOTE: from this point on, CS:EIP is permanently moved away from the
     # F000:FFF0 reset vector the checks above depended on -- this section
-    # must stay last in this script, same reasoning as
-    # tests/test_mcp_native_bridge.py's Phase 4C section.
+    # (and everything after it) must stay last in this script, same
+    # reasoning as tests/test_mcp_native_bridge.py's Phase 4C section.
+    # F000:FFF0 is a direct "jmp F000:E05B" (confirmed by the code.current
+    # check above) -- a deterministic, known transition to single-step
+    # through without needing any test COM file.
+    req_id, raw = client.request("execution.step_into")
+    print(f"--> execution.step_into (JMP F000:E05B)\n<-- {raw}")
+    resp = json.loads(raw)
+    r.check("execution.step_into: response id matches request id", resp.get("id") == req_id)
+    r.check("execution.step_into: ok is true", resp.get("ok") is True)
+    if resp.get("ok"):
+        result = resp.get("result", {})
+        r.check("execution.step_into: result.stopped is true", result.get("stopped") is True)
+        loc = result.get("location", {})
+        r.check("execution.step_into: CS:EIP moved to F000:E05B (the JMP target)",
+                loc.get("cs") == "F000" and loc.get("eip") == "E05B")
+        r.check("execution.step_into: result has real registers.eax (8 hex digits)",
+                is_hex(result.get("registers", {}).get("eax"), 8))
+        print(f"    real CS:EIP after step_into = {loc.get('cs')}:{loc.get('eip')}")
+    print()
+
+    # -- execution.step_over on a non-call instruction (Phase 4D) --------
+    # Whatever instruction is at F000:E05B, it is not itself a call/int/
+    # loop/rep target we control here, but step_over() must still behave
+    # like step_into() for it (StepOver() falls through for anything that
+    # isn't call/int/loop/rep) -- verified generically: the debugger must
+    # still be stopped afterward with a real (possibly identical or
+    # different) CS:EIP, not by asserting a specific target address.
+    req_id, raw = client.request("execution.step_over")
+    print(f"--> execution.step_over\n<-- {raw}")
+    resp = json.loads(raw)
+    r.check("execution.step_over: response id matches request id", resp.get("id") == req_id)
+    r.check("execution.step_over: ok is true", resp.get("ok") is True)
+    if resp.get("ok"):
+        result = resp.get("result", {})
+        r.check("execution.step_over: result.stopped is true", result.get("stopped") is True)
+        loc = result.get("location", {})
+        r.check("execution.step_over: location has real CS:EIP",
+                is_hex(loc.get("cs"), 4) and is_hex(loc.get("eip"), 4))
+        print(f"    real CS:EIP after step_over = {loc.get('cs')}:{loc.get('eip')}")
+    print()
+
+    # -- execution.continue / execution.pause round trip (Phase 4C) ------
     req_id, raw = client.request("execution.continue")
     print(f"--> execution.continue\n<-- {raw}")
     resp = json.loads(raw)
@@ -252,6 +293,22 @@ def run(host, port):
     resp = json.loads(raw)
     r.check("execution.continue (already running): ok is false", resp.get("ok") is False)
     r.check("execution.continue (already running): error.code == ALREADY_RUNNING",
+            resp.get("error", {}).get("code") == "ALREADY_RUNNING")
+    print()
+
+    req_id, raw = client.request("execution.step_into")
+    print(f"--> execution.step_into (already running)\n<-- {raw}")
+    resp = json.loads(raw)
+    r.check("execution.step_into (already running): ok is false", resp.get("ok") is False)
+    r.check("execution.step_into (already running): error.code == ALREADY_RUNNING",
+            resp.get("error", {}).get("code") == "ALREADY_RUNNING")
+    print()
+
+    req_id, raw = client.request("execution.step_over")
+    print(f"--> execution.step_over (already running)\n<-- {raw}")
+    resp = json.loads(raw)
+    r.check("execution.step_over (already running): ok is false", resp.get("ok") is False)
+    r.check("execution.step_over (already running): error.code == ALREADY_RUNNING",
             resp.get("error", {}).get("code") == "ALREADY_RUNNING")
     print()
 

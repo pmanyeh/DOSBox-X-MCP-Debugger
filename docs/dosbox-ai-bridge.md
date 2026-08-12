@@ -1,11 +1,12 @@
-# DOSBox-X Native AI Bridge (Phase 3B / Phase 4A / Phase 4B / Phase 4C)
+# DOSBox-X Native AI Bridge (Phase 3B / Phase 4A / Phase 4B / Phase 4C / Phase 4D)
 
 Status: read-only inspection (Phase 3B), real write access to guest memory
 and a whitelisted subset of general-purpose registers (Phase 4A),
 breakpoint management against DOSBox-X's own breakpoint system (Phase 4B),
-and real execution control -- resuming and stopping the actual guest CPU
-(Phase 4C). See "Build & runtime verification" below for this session's
-actual result.
+real execution control -- resuming and stopping the actual guest CPU
+(Phase 4C) -- and real single-step control -- step-into and step-over
+against the actual guest CPU (Phase 4D). See "Build & runtime verification"
+below for this session's actual result.
 
 Files: `dosbox-src/src/debug/debug_ai.h`, `dosbox-src/src/debug/debug_ai.cpp`.
 Integration touches `dosbox-src/src/debug/debug.cpp` (one `#include`, one
@@ -13,23 +14,30 @@ Integration touches `dosbox-src/src/debug/debug.cpp` (one `#include`, one
 `DEBUG_ShutDown()`, one accessor for `debug_running`, two small `public:`
 additions to the existing `CBreakpoint` class (`GetCount()`/`GetByIndex()`)
 plus five free-function wrappers around `CBreakpoint`'s existing static
-methods (Phase 4B), and -- new in Phase 4C -- the "RUN" command's body
-extracted into a shared `DEBUG_AI_DoContinue()` function, one new
-`DEBUG_AI_CheckPauseRequest()` function, and two `DEBUG_AI_SetDebuggerActive()`
-call sites), `dosbox-src/src/dosbox.cpp` (Phase 4C: two calls in
-`Normal_Loop()`, right next to its existing `DEBUG_ExitLoop()` check), and
+methods (Phase 4B), the "RUN" command's body extracted into a shared
+`DEBUG_AI_DoContinue()` function, one `DEBUG_AI_CheckPauseRequest()`
+function, and two `DEBUG_AI_SetDebuggerActive()` call sites (Phase 4C), and
+-- new in Phase 4D -- the F10/F11 key handlers' bodies extracted into two
+shared functions (`DEBUG_AI_DoStepInto()`/`DEBUG_AI_DoStepOver()`, plus a
+small shared `DEBUG_AI_HandleStepCallback()` helper), and one
+`DEBUG_AI_CompletePendingSteps()` call site right next to `DEBUG_Loop()`'s
+existing `DEBUG_AI_SetDebuggerActive(true)`), `dosbox-src/src/dosbox.cpp`
+(Phase 4C: two calls in `Normal_Loop()`, right next to its existing
+`DEBUG_ExitLoop()` check; untouched by Phase 4D), and
 `dosbox-src/include/debug.h` (Phase 4C: two new declarations so
 `dosbox.cpp` can reach the two debug.cpp/debug_ai.cpp functions above
-without a new include dependency) and the build file lists (`Makefile.am`,
-`dosbox-x.vcxproj`, `dosbox-x.vcxproj.filters`). No other DOSBox-X source
-was modified. The existing curses debugger UI, its command processing
-(`ParseCommand`), and disassembler (`DasmI386`) are untouched and continue
-to work exactly as before; breakpoints now have two callers (the GUI's
-`BP`/`BPDEL`/`BPLIST` commands and the AI bridge) sharing the one
-`CBreakpoint::BPoints` list DOSBox-X already had -- see "Breakpoint
-management (Phase 4B)" below; the GUI's "RUN" command and the AI bridge's
-`execution.continue` now share one implementation -- see "Execution
-control (Phase 4C)" below.
+without a new include dependency; untouched by Phase 4D) and the build file
+lists (`Makefile.am`, `dosbox-x.vcxproj`, `dosbox-x.vcxproj.filters`). No
+other DOSBox-X source was modified. The existing curses debugger UI, its
+command processing (`ParseCommand`), and disassembler (`DasmI386`) are
+untouched and continue to work exactly as before; breakpoints now have two
+callers (the GUI's `BP`/`BPDEL`/`BPLIST` commands and the AI bridge)
+sharing the one `CBreakpoint::BPoints` list DOSBox-X already had -- see
+"Breakpoint management (Phase 4B)" below; the GUI's "RUN" command and the
+AI bridge's `execution.continue` now share one implementation -- see
+"Execution control (Phase 4C)" below; the GUI's F10/F11 keys and the AI
+bridge's `execution.step_into`/`execution.step_over` now share one
+implementation each -- see "Single-step control (Phase 4D)" below.
 
 ## Why this design
 
@@ -119,6 +127,8 @@ functionality:
 | `breakpoint.list`    | `CBreakpoint::GetCount()`/`GetByIndex()` (new, Phase 4B) + existing `GetType()`/`GetSegment()`/`GetOffset()` |
 | `execution.continue` | `DEBUG_AI_DoContinue()` (debug.cpp) -- the exact body the GUI's "RUN" command used to have inline, extracted so both callers share it: `debug_running=false`, `debugging=false`, `DEBUG_Run(1,false)`, `DOSBOX_SetNormalLoop()` (Phase 4C) |
 | `execution.pause`    | `DEBUG_Enable_Handler()` -- the exact same function Ctrl+Pause calls -- triggered from `DEBUG_AI_CheckPauseRequest()` (debug.cpp), called from `Normal_Loop()`'s existing `DEBUG_ExitLoop()`-adjacent hook (dosbox.cpp) (Phase 4C) |
+| `execution.step_into` | `DEBUG_AI_DoStepInto()` (debug.cpp) -- the exact body the GUI's F11 ("trace into") key used to have inline: `DEBUG_Run(1,true)` (Phase 4D) |
+| `execution.step_over` | `DEBUG_AI_DoStepOver()` (debug.cpp) -- the exact body the GUI's F10 ("step over") key used to have inline: `StepOver()` (debug.cpp's existing call/int/loop/rep detector + one-shot breakpoint placer) falling through to `DEBUG_AI_DoStepInto()`, or `DEBUG_Run(1,false)` for a call/int/loop/rep instruction (Phase 4D) |
 
 No second disassembler, no second CPU/register model, no second
 breakpoint system, and no second execution engine were written.
@@ -311,6 +321,120 @@ snapshot, now also carrying a `"running"` field (the plain inverse of
 `"stopped"`, added for symmetry -- existing consumers keyed off
 `"stopped"` are unaffected).
 
+### Single-step control (Phase 4D)
+
+**Source analysis first, per Phase4D.md section 1.** Before writing any
+C++, the existing step/step-over implementation was located and read (this
+had already been identified during Phase 3's Gate A analysis --
+`docs/dosbox-debugger-analysis.md` section 5.8/5.9/"Gate A Summary" row 6 --
+and was re-confirmed by direct read for this phase): step-into is the F11
+key (`DEBUG_CheckKeys()`, `debug.cpp`), which calls
+`DEBUG_Run(1,true)` -- `quickexit=true`, so `DEBUG_Run()` runs exactly one
+guest instruction through the real CPU decoder (`(*cpudecoder)()`) and
+returns *without* switching the main loop away from `DEBUG_Loop()`; the
+debugger stays in control the whole time, no cross-thread hand-off needed.
+Step-over is the F10 key, which calls `StepOver()` (`debug.cpp`, existing,
+unmodified) first: `StepOver()` disassembles the current instruction via
+`DasmI386()` and, if the text contains "call", "int", "loop", or "rep",
+places a one-shot breakpoint just past it (reusing
+`CBreakpoint::AddBreakpoint(...,once=true)`, the exact same mechanism
+`breakpoint.set` uses) and returns `true`; the F10 handler then calls
+`DEBUG_Run(1,false)` -- `quickexit=false`, the SAME transition
+`execution.continue`/RUN use, handing control to `Normal_Loop()` so the
+subroutine/interrupt/loop runs for real until that one-shot breakpoint (or
+any other) re-enters the debugger. If `StepOver()` returns `false` (not one
+of those instruction kinds), the F10 handler falls through to the exact
+same code F11 uses -- an ordinary step-into. No second CPU stepping
+mechanism, no independent call-depth tracker, and no EIP arithmetic were
+written anywhere in this phase; every state transition below is produced by
+`DEBUG_Run()`/`StepOver()`/`CBreakpoint`, the same functions the human GUI's
+F10/F11 keys already called.
+
+**Two shared functions, not two copies.** `DEBUG_AI_DoStepInto()` and
+`DEBUG_AI_DoStepOver()` (both `debug.cpp`) now hold the F10/F11 key
+handlers' entire bodies (draw-state bookkeeping, `StepOver()`/`DEBUG_Run()`
+calls, and -- new in this phase -- the post-`DEBUG_Run()` callback dispatch
+every other `DEBUG_Run()` caller in this file already applies, factored
+into a small `DEBUG_AI_HandleStepCallback()` helper so a single-stepped
+instruction that itself invokes a `CALLBACK_Setup()`-registered routine,
+e.g. `INT 21h` landing on a C++-implemented DOS API handler, is dispatched
+identically whether triggered by a human or the AI bridge). `DEBUG_CheckKeys()`'s
+`KEY_F(10)`/`KEY_F(11)` cases now just call these functions; `DEBUG_AI_Poll()`
+calls the exact same functions for `execution.step_into`/`execution.step_over`.
+This mirrors the Phase 4C precedent exactly (the "RUN" command's body
+extracted into `DEBUG_AI_DoContinue()`, shared by `ParseCommand()` and the
+bridge).
+
+**step_into is always synchronous.** `ExecExecutionStepInto()` (debug_ai.cpp)
+calls `DEBUG_AI_DoStepInto()` then immediately reuses `ExecDebugStatus()` --
+the SAME builder `debug.status`/`execution.pause` use -- to return a full,
+genuine post-step snapshot. Since `DEBUG_Run(1,true)` never leaves
+`DEBUG_Loop()` in control of the loop pointer, this needs nothing beyond
+the ordinary `g_requestQueue`/`DEBUG_AI_Poll()` mechanism every other method
+(Phase 3B/4A/4B/4C) already uses.
+
+**step_over is usually synchronous, sometimes asynchronous.** For any
+instruction that isn't call/int/loop/rep, `DEBUG_AI_DoStepOver()` falls
+through to `DEBUG_AI_DoStepInto()` internally and the request completes
+synchronously exactly like step_into. For a call/int/loop/rep instruction,
+`DEBUG_Run(1,false)` hands control to `Normal_Loop()` -- exactly like
+`execution.continue` -- so there is no new "stopped" state to report yet.
+`DEBUG_AI_DoStepOver()` signals this to its caller via an out-parameter
+(`becameAsync`); `ExecExecutionStepOver()` (debug_ai.cpp) responds to it by
+registering the request with `DEBUG_AI_RequestStepCompletion()` (a pending
+list, `g_pendingSteps`, structurally identical to Phase 4C's
+`g_pendingPauses`) instead of returning a response string -- signalled to
+`DEBUG_AI_Poll()` by returning an empty string, which it recognizes as "do
+not mark this connection's response ready yet." `DEBUG_AI_CompletePendingSteps()`
+(debug_ai.cpp) drains that list and answers each pending request with a
+real `ExecDebugStatus()` snapshot; it is called from `DEBUG_Loop()` itself,
+right next to the existing `DEBUG_AI_SetDebuggerActive(true)` call (a
+no-op, cheap empty-list check, on every iteration nothing is pending) --
+deliberately the SAME place, and the SAME reasoning ("the debugger
+genuinely has control again this iteration, no matter which of its several
+entry points got it here") Phase 4C already established for that call site,
+rather than a second, step-specific hook in `Normal_Loop()`/dosbox.cpp. No
+changes to `dosbox.cpp` or `include/debug.h` were needed for step_over's
+async path -- unlike `execution.pause` (which needs a `Normal_Loop()`-side
+hook because pause only makes sense while the debugger is *not* active),
+"the debugger regained control" is inherently a `DEBUG_Loop()`-side event
+for step_over.
+
+**Why not a third error code.** Both `execution.step_into` and
+`execution.step_over` reject with the existing `ALREADY_RUNNING` (not a new
+"cannot step" code) when `g_debuggerActive` is false -- the exact same
+precondition and exact same meaning `execution.continue` already uses
+`ALREADY_RUNNING` for. Phase4C.md's own reasoning for not adding
+`EXECUTION_STATE_ERROR` ("every invalid state transition this design can
+produce is precisely one of ALREADY_RUNNING/ALREADY_STOPPED, so a third,
+vaguer code would have nothing distinct to report") applies again here, so
+Phase4D.md section 8's suggested `STEP_NOT_AVAILABLE` was deliberately not
+added either. A step_over that took the async path and does not complete
+within `REQUEST_TIMEOUT_SECONDS` (5s) returns `EXECUTION_TIMEOUT` (the
+same code Phase 4C defined) rather than the generic `DEBUGGER_NOT_STOPPED`
+every other timed-out method returns -- the debugger genuinely was entered
+and a step genuinely was kicked off, it just has not completed yet, so
+`HandleLine()`'s shared enqueue+wait tail special-cases this one method's
+timeout response (and cancels its pending-step registration via
+`DEBUG_AI_CancelStep()`, mirroring `DEBUG_AI_CancelPause()`) rather than
+falling through to the generic message.
+
+**GUI consistency is explicit, not incidental.** `DEBUG_AI_DoStepInto()`
+calls `DEBUG_DrawScreen()` after handling the step (in addition to the
+`SetCodeWinStart()` that `DEBUG_Run(1,true)`'s `quickexit=true` branch
+already performs internally, which only updates internal state, not the
+visible screen) -- verified necessary empirically during this phase's live
+testing: a step_into() issued purely from the AI bridge (no key ever
+pressed) left the curses console showing the pre-step position until an
+explicit repaint was added, because `DEBUG_AI_Poll()` runs *before*
+`DEBUG_CheckKeys()`'s own draw call each `DEBUG_Loop()` iteration and
+nothing else on that path repaints the screen. `DEBUG_AI_CompletePendingSteps()`
+calls `DEBUG_DrawScreen()` once (before dispatching responses) whenever it
+has anything pending, giving the async step_over path the same guarantee.
+See "Build & runtime verification" below for the screenshot-based
+confirmation this actually works, both for the synchronous and the async
+case.
+
 ### Response slot → socket thread
 
 The waiting connection thread wakes up, takes the completed response line,
@@ -354,9 +478,22 @@ Newline-delimited JSON, exactly as specified in Phase3.md section 8:
 
 --> {"id": 10, "method": "execution.pause"}
 <-- {"id": 10, "ok": true, "result": {"stopped":true,"running":false,"location":{...},"instruction":{...},"registers":{...},"segments":{...},"flags":{...}}}
+
+--> {"id": 11, "method": "execution.step_into"}
+<-- {"id": 11, "ok": true, "result": {"stopped":true,"running":false,"location":{...},"instruction":{...},"registers":{...},"segments":{...},"flags":{...}}}
+
+--> {"id": 12, "method": "execution.step_over"}
+<-- {"id": 12, "ok": true, "result": {"stopped":true,"running":false,"location":{...},"instruction":{...},"registers":{...},"segments":{...},"flags":{...}}}
 ```
 
-`execution.continue`/`execution.pause` take no `params`. `execution.pause`'s
+`execution.continue`/`execution.pause`/`execution.step_into`/`execution.step_over`
+take no `params`. `execution.step_into`'s and `execution.step_over`'s
+results have the same shape as `execution.pause`'s -- a full, genuine
+post-step `debug.status`-shaped snapshot, not an acknowledgement -- in both
+cases, including when `execution.step_over` took the asynchronous
+call/int/loop/rep path internally (the caller cannot tell from the response
+shape whether the synchronous or asynchronous path was taken; only the
+time-to-response differs). `execution.pause`'s
 result has the same shape as `debug.status`'s full (stopped) result --
 real, post-pause debugger state, not an acknowledgement.
 
@@ -371,13 +508,19 @@ Error codes implemented: `INVALID_JSON`, `INVALID_REQUEST`,
 `UNKNOWN_METHOD`, `INVALID_PARAMETER`, `DEBUGGER_NOT_STOPPED`,
 `MEMORY_ERROR`, `REGISTER_NOT_WRITABLE` (Phase 4A), `INVALID_ADDRESS`,
 `BREAKPOINT_NOT_FOUND`, `BREAKPOINT_ALREADY_EXISTS` (Phase 4B),
-`ALREADY_RUNNING`, `ALREADY_STOPPED`, `EXECUTION_TIMEOUT` (Phase 4C).
+`ALREADY_RUNNING`, `ALREADY_STOPPED`, `EXECUTION_TIMEOUT` (Phase 4C -- and,
+as of Phase 4D, also returned by `execution.step_over` when its async
+call/int/loop/rep path doesn't complete in time).
 (`INTERNAL_ERROR` exists both as a fallback for an unreachable switch case
 and for the (should-never-happen) case where `AddBreakpoint()` succeeds
 but the new breakpoint can't be found again to report its id.) Every
 native error code is propagated unchanged through `DOSBoxClient` to the
 MCP response -- see `DOSBoxClientError.code` in `ai/dosbox_client.py` --
-never collapsed into a generic one.
+never collapsed into a generic one. No new error codes were introduced in
+Phase 4D -- see "Why not a third error code" under "Single-step control
+(Phase 4D)" above for why `execution.step_into`/`execution.step_over`
+reuse `ALREADY_RUNNING`/`EXECUTION_TIMEOUT` rather than adding
+`STEP_NOT_AVAILABLE` (Phase4D.md section 8's suggestion).
 
 `ALREADY_RUNNING`/`ALREADY_STOPPED` are answered immediately by the
 socket thread (from `g_debuggerActive`, no queueing, no wait) rather than
@@ -414,14 +557,23 @@ mechanisms (`DEBUG_Run()`/`DOSBOX_SetNormalLoop()`, `DEBUG_Enable_Handler()`)
 the debugger GUI's own RUN command and Ctrl+Pause already use -- see
 "Execution control (Phase 4C)" above.
 
-Deliberately **not** implemented yet (Phase 4D, per Phase4C.md section
-16): `step_into`, `step_over`, and any modification of EIP, CS, ESP, or
-EFLAGS write permissions. The request queue/`DEBUG_AI_Poll()` integration
-point and the Phase 4C pause-request/`Normal_Loop()` hook already cover
-every execution context stepping would need (stopped, for a single-step
-request; running, if step semantics ever needed to interrupt free
-execution), so adding these later needs no redesign of the threading
-model.
+Implemented, single-step control (Phase 4D): `execution.step_into`,
+`execution.step_over` -- real guest CPU single-stepping, against the SAME
+mechanisms (`DEBUG_Run()`, `StepOver()`, `CBreakpoint`) the debugger GUI's
+own F11/F10 keys already use -- see "Single-step control (Phase 4D)"
+above. As anticipated when Phase 4C's own "Deliberately not implemented
+yet" note was written, no redesign of the threading model was needed: the
+request queue/`DEBUG_AI_Poll()` integration point covers step_into and
+step_over's synchronous case, and a pending-list pattern structurally
+identical to Phase 4C's pause-request one covers step_over's asynchronous
+case.
+
+Deliberately **not** implemented: any modification of EIP, CS, ESP, or
+EFLAGS write permissions (Phase4A.md explicitly reserves these for later,
+separate approval; Phase 4D did not revisit this). Phase 5 autonomous AI
+debugging (multi-step reasoning/investigation loops built on top of these
+primitives) is explicitly out of scope for Phase 4D, per Phase4D.md's own
+stop condition.
 
 ## Security
 
@@ -524,6 +676,49 @@ model.
   exercised by an automated test -- doing so would require artificially
   stalling the emulator thread, which none of this session's other tests
   need to do and which isn't a state the bridge itself can induce.
+* (Phase 4D) `execution.step_over`'s `EXECUTION_TIMEOUT` path has the same
+  "not exercised by an automated test" limitation as Phase 4C's
+  pause-side one, but for a different reason: it *could* be exercised
+  deliberately (unlike stalling the emulator thread, nothing prevents a
+  test program from `CALL`ing a subroutine that never returns), but doing
+  so was judged not worth adding to this phase's test programs given the
+  5-second wait it would add to every test run; the code path itself
+  (`HandleLine()`'s step_over-specific timeout branch, `DEBUG_AI_CancelStep()`)
+  is exercised implicitly by every step_over integration test completing
+  successfully well inside that timeout.
+* (Phase 4D) DOSBox-X's own emulated CPU speed (this project's default
+  configuration: 3000 cycles/ms, matching real early-1990s hardware) is
+  slow enough in wall-clock terms that a busy-wait loop sized for Phase 4C's
+  purposes (TEST.COM's ~268 million iterations, chosen for a wide
+  continue/pause "catch window" when the loop is merely being run *through*
+  and a breakpoint inside it is hit on its very first pass) takes on the
+  order of a minute or more to run to genuine *completion* -- impractical
+  for a test that needs the whole loop to finish (drive_c/STEP.COM's own
+  warm-up loop, used to reach its deterministic step_into/step_over test
+  sequence, deliberately uses a much smaller iteration count -- see
+  `tests/test_step_execution.py`'s module docstring for the arithmetic).
+  This is a property of the default emulated speed, not of the AI bridge
+  or the stepping mechanism itself; a real AI agent single-stepping through
+  a normal-sized subroutine (not a multi-hundred-million-iteration busy
+  loop) will not encounter it.
+* (Phase 4D) A Release build of `dosbox-x.vcxproj` uses Whole Program
+  Optimization (`/GL`, LTCG). During this phase's own build/verify cycle, a
+  purely *incremental* rebuild (touching only `debug.cpp`/`debug_ai.cpp`/
+  `debug_ai.h` between builds, without a `Clean` first) twice produced a
+  binary that built with 0 errors/warnings but crashed
+  (`STATUS_STACK_BUFFER_OVERRUN`, `0xC0000409`, confirmed via Windows'
+  Application Error event log) within a few seconds of entering the
+  debugger -- reproducibly, at the identical fault offset, on code paths
+  (an unconditional, empty-list-fast-path function call on every
+  `DEBUG_Loop()` iteration) that have no plausible logic bug. A `Clean`
+  followed by a full rebuild produced a binary that ran correctly, and
+  every crash symptom disappeared. This is consistent with a known class of
+  MSVC LTCG incremental-link hazard (stale/inconsistent code generation
+  across an incremental Release+LTCG link), not a bug in this phase's C++
+  changes -- but it means an incremental Release+LTCG build of this project
+  cannot be trusted as a verification artifact; a `Clean` + full rebuild is
+  required before any live verification session, and this phase's own
+  "Build & runtime verification" results below are from such a clean build.
 
 ## Build & runtime verification
 
@@ -623,3 +818,128 @@ breakpoint+continue test (and documented in its module-level comment) as
 a real, deterministic breakpoint target, after `write_memory`/
 `read_memory` established that DOSBox-X's BIOS ROM segments silently
 discard writes and so cannot host a working physical breakpoint.
+
+**Phase 4D**: `Clean` followed by a full rebuild of `dosbox-x.vcxproj`
+(same toolchain override as Phase 4C: `PlatformToolset=v145`; see "Known
+limitations" above for why the initial incremental rebuild attempt was
+discarded) -- 0 errors, 0 warnings. Two live verification passes were run,
+each against its own freshly-launched instance (per the reasoning in
+`tests/test_step_execution.py`'s module docstring, `drive_c/TEST.COM` and
+`drive_c/STEP.COM` cannot both be the auto-run program in the same
+process, so -- like each of Phase 4A/4B/4C's own relaunches with different
+arguments -- this phase needed two):
+
+* `dosbox-x.exe -break-start drive_c\TEST.COM`, `127.0.0.1:9876 LISTENING`
+  reconfirmed: `tests\test_native_bridge.py` 63/63 raw-protocol checks
+  passed, including `execution.step_into`/`execution.step_over` against
+  the live reset-vector state (`step_into` on the reset vector's own
+  `jmp F000:E05B` moved real CS:EIP from `F000:FFF0` to `F000:E05B`
+  exactly, confirmed instruction-for-instruction against the documented
+  reset-vector behavior; `step_over` on the instruction there, which
+  happened to disassemble as `"callback 001B"` -- containing the substring
+  `"call"`, so `StepOver()` genuinely took the one-shot-breakpoint async
+  path -- completed correctly, landing at a real, different CS:EIP with
+  real changed register state) and `ALREADY_RUNNING` rejection for both
+  methods while running; full pytest suite (57 tests, the complete
+  Phase 2/3B/4A/4B/4C regression set, none touched by Phase 4D) passed
+  against a separately-launched instance of the same command line,
+  confirming zero regressions.
+* `dosbox-x.exe -break-start drive_c\STEP.COM` (a new Phase 4D test
+  program, see below), `127.0.0.1:9876 LISTENING` reconfirmed:
+  `tests\test_step_execution.py` 11/11 tests passed against this live
+  instance -- step_into over two ordinary instructions (verifying both
+  CS:EIP and the executed instruction's real register effect each time);
+  step_into INTO a `CALL` (landing inside the called function, at its
+  first instruction, before that instruction has executed); step_over
+  ACROSS a different `CALL` to a different function (landing at the
+  instruction after the `CALL`, with that function's own instruction's
+  real register effect (`EDX`) already visible -- proving the subroutine
+  genuinely ran to completion via `RET`, not that step_over silently
+  skipped it); step_over on an ordinary instruction behaving identically
+  to step_into; a real `RET` (via step_into, since `RET` is not
+  call/int/loop/rep) returning to the real post-`CALL` address; three-way
+  cross-checks between `debug.status`/`cpu.get`/`code.current` after a
+  step; and `ALREADY_RUNNING` rejection for both methods while running. A
+  real MCP session (via `mcp.list_tools()`/`mcp.call_tool()`, the same
+  protocol layer MCP Inspector itself uses, per the Phase 4C precedent)
+  confirmed `tools/list` contains `step_into`/`step_over` and that calling
+  them produces genuine CS:EIP/register transitions.
+
+The required human GUI cross-check (Phase4D.md section 12) was performed
+by the agent itself this session via OS-level window screenshots (not GUI
+*automation* -- no synthetic keyboard/mouse input was sent to DOSBox-X or
+its debugger; the window was only brought to the foreground and
+photographed, the same non-interactive observation a human glancing at the
+screen would make) rather than a human collaborator, since none was
+available to watch the screen live during this run. This surfaced a real
+gap during verification: the first screenshot taken after an MCP
+`step_into()` call showed the debugger console still displaying the
+*pre-step* position, unchanged even after forcing an OS-level window
+repaint (minimize/restore) -- i.e. genuinely stale, not a screenshot
+capture artifact. This was `DEBUG_AI_DoStepInto()`/
+`DEBUG_AI_CompletePendingSteps()` missing an explicit `DEBUG_DrawScreen()`
+call (see "GUI consistency is explicit, not incidental" above); once
+added and rebuilt, a follow-up screenshot after another `step_into()`
+showed the debugger console's Code Overview pane correctly highlighting
+`0816:0100` with the exact instruction (`mov sp,0400`) and register values
+(`CS=0816`, `ESP=0000FFFE`) `step_into()`'s own MCP response reported for
+that call, and a further screenshot after a `step_over()` that took the
+asynchronous path (stepping over an `"callback 0038"` instruction, landing
+past it) correctly showed `F000:0000D105` (`iret`) highlighted, matching
+that response's location exactly, with `EAX`/`ESP` visibly changed from
+the pre-step snapshot. Both the synchronous and asynchronous GUI-redraw
+paths are confirmed against the same live instance; the underlying
+screenshots are not included in this repository (they were used only to
+inspect the running window during this session and are not build
+artifacts).
+
+**`drive_c/STEP.COM`** (new in Phase 4D, per Phase4D.md section 5 -- "at
+least: ordinary instruction, CALL, return"): a 42-byte hand-assembled DOS
+COM program -- `BB 40 00 B9 FF FF 90 E2 FD 4B 75 F7 B8 11 11 BB 22 22 E8
+0D 00 B9 33 33 E8 0B 00 BE 55 55 B4 4C CD 21 BA 44 44 C3 BF 66 66 C3`,
+equivalent to:
+
+```
+ORG 100h
+        MOV BX, 0040h        ; busy-loop warm-up (small -- see below)
+outer:  MOV CX, 0FFFFh
+inner:  NOP
+        LOOP inner
+        DEC BX
+        JNZ outer
+landing:
+        MOV AX, 1111h         ; ordinary instruction
+        MOV BX, 2222h         ; ordinary instruction
+        CALL func1                    ; step_over() target
+        MOV CX, 3333h         ; instruction immediately after CALL func1
+        CALL func2                    ; step_into() target
+        MOV SI, 5555h                 ; instruction immediately after CALL func2
+        MOV AH, 4Ch
+        INT 21h                        ; exit
+func1:
+        MOV DX, 4444h                 ; proves func1 genuinely ran
+        RET
+func2:
+        MOV DI, 6666h                 ; proves step_into() lands INSIDE func2
+        RET
+```
+
+The busy-loop warm-up has the same shape as `drive_c/TEST.COM`'s own loop
+(same opcodes/registers, same relative-displacement encodings) -- reusing
+the SAME "catch a program auto-running via repeated continue/pause,
+matched against a known byte signature at its load segment's offset 0100"
+technique `tests/test_mcp_native_bridge.py` already established for
+TEST.COM -- but with a much smaller outer-loop count. TEST.COM's loop is
+sized to be *run through* quickly (a breakpoint inside it is hit on the
+very first pass, regardless of loop length); STEP.COM's own test needs its
+warm-up loop to run to genuine *completion* before reaching `landing`, and
+at this project's default emulated CPU speed TEST.COM's ~268-million-
+iteration loop would take on the order of a minute or more to actually
+finish (see "Known limitations" above) -- so STEP.COM's loop uses a
+0x40 outer count instead, empirically well under 5 seconds to complete
+while still comfortably wide enough for the continue/pause catch technique
+to work reliably. Two independent `CALL`s (to `func1`/`func2`) let the
+step_over-skips-the-call and step_into-enters-the-call scenarios each be
+demonstrated once, using real, distinct code paths, without needing to
+revisit any address a COM program's inherently linear, run-once control
+flow can't return to.

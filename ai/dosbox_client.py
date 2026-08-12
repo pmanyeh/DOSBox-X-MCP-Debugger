@@ -96,10 +96,10 @@ class DOSBoxBreakpointAlreadyExists(DOSBoxClientError):
 
 
 class DOSBoxAlreadyRunning(DOSBoxClientError):
-    """continue_execution() was called while guest execution is already
-    running -- the debugger is not currently stopped (see native error
-    code ALREADY_RUNNING, Phase 4C). Call get_debug_status() first if
-    unsure of the current state."""
+    """continue_execution()/step_into()/step_over() was called while guest
+    execution is already running -- the debugger is not currently stopped
+    (see native error code ALREADY_RUNNING, Phase 4C/4D). Call
+    get_debug_status() first if unsure of the current state."""
 
     code = "ALREADY_RUNNING"
 
@@ -113,10 +113,12 @@ class DOSBoxAlreadyStopped(DOSBoxClientError):
 
 
 class DOSBoxExecutionTimeout(DOSBoxClientError):
-    """pause_execution() was requested but did not complete within the
-    native bridge's timeout (see native error code EXECUTION_TIMEOUT,
-    Phase 4C). This does not necessarily mean the pause failed -- it may
-    still complete shortly after; call get_debug_status() to check."""
+    """pause_execution() or step_over() was requested but did not complete
+    within the native bridge's timeout (see native error code
+    EXECUTION_TIMEOUT, Phase 4C/4D). For step_over(), this means the
+    stepped-over call/int/loop/rep instruction had not returned within the
+    timeout -- it does not necessarily mean the step failed; call
+    get_debug_status() to check whether it has completed since."""
 
     code = "EXECUTION_TIMEOUT"
 
@@ -332,3 +334,33 @@ class DOSBoxClient:
         EXECUTION_TIMEOUT) if it didn't complete in time."""
 
         return self.request("execution.pause")
+
+    def step_into(self) -> dict:
+        """Execute exactly one guest instruction -- the SAME transition the
+        debugger GUI's F11 ("trace into") key makes (DEBUG_Run(1,true)).
+        Only valid while the debugger is stopped; raises DOSBoxAlreadyRunning
+        (native ALREADY_RUNNING) otherwise. Always synchronous: blocks until
+        the real DOSBox-X CPU decoder has genuinely executed the instruction,
+        and returns a real debug.status snapshot (location, instruction,
+        registers, segments, flags) taken after it stopped again -- the
+        same shape pause_execution() returns."""
+
+        return self.request("execution.step_into")
+
+    def step_over(self) -> dict:
+        """Step over the current instruction -- the SAME transition the
+        debugger GUI's F10 ("step over") key makes (StepOver()+DEBUG_Run()).
+        For an ordinary instruction this behaves exactly like step_into().
+        For a call/int/loop/rep instruction, DOSBox-X's own StepOver()
+        places a one-shot breakpoint just past it and lets the subroutine
+        run for real; this call blocks (on the native bridge side) until
+        that breakpoint (or any other event) re-enters the debugger, then
+        returns the real post-step debug.status snapshot, exactly like
+        step_into(). Only valid while the debugger is stopped; raises
+        DOSBoxAlreadyRunning (native ALREADY_RUNNING) otherwise. Raises
+        DOSBoxExecutionTimeout (native EXECUTION_TIMEOUT) if the
+        stepped-over call/int/loop/rep does not return within the
+        timeout -- call get_debug_status() afterward to check whether it
+        completed shortly after."""
+
+        return self.request("execution.step_over")
