@@ -4,7 +4,7 @@ You are working on DOSBox-X-AI.
 
 Project root:
 
-D:\git\DOSBox-X-AI
+<repository-root>
 
 Read AGENTS.md first.
 

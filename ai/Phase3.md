@@ -64,7 +64,7 @@ function already provides the required functionality.
 
 DOSBox-X source should be located at:
 
-    D:\git\DOSBox-X-AI\dosbox-src\
+    <repository-root>\dosbox-src\
 
 
 Do not modify:
