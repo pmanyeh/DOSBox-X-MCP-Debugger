@@ -8,7 +8,7 @@ Project name:
 
 Project root:
 
-    D:\git\DOSBox-X-AI
+    <repository-root>
 
 Primary goal:
 
@@ -143,7 +143,7 @@ The development environment is Windows.
 
 Project root:
 
-    D:\git\DOSBox-X-AI
+    <repository-root>
 
 Python:
 
@@ -151,7 +151,7 @@ Python:
 
 Python virtual environment:
 
-    D:\git\DOSBox-X-AI\.venv
+    <repository-root>\.venv
 
 MCP version currently installed:
 
@@ -201,7 +201,7 @@ Do not modify DOSBox-X source until the Python/MCP layer has passed its initial 
 
 Create/maintain:
 
-    D:\git\DOSBox-X-AI\
+    <repository-root>\
     |
     +-- .venv\
     |
@@ -417,7 +417,7 @@ Obtain DOSBox-X source for the target version.
 
 Place source under:
 
-    D:\git\DOSBox-X-AI\dosbox-src\
+    <repository-root>\dosbox-src\
 
 
 Do not overwrite the portable binary directory.
