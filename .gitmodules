@@ -1,0 +1,3 @@
+[submodule "dosbox-src"]
+	path = dosbox-src
+	url = https://github.com/pmanyeh/dosbox-x.git
