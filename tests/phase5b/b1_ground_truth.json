@@ -1,0 +1,29 @@
+{
+  "_comment": "Independently observed DOSBox-X execution, captured live for Phase 5B-3 (ai/Phase5B-3.md). This is evidence that the B1 grading ground truth is 'expected because DOSBox-X actually did this', not a hand-derived assumption. Captured by walking drive_c/STEP.COM from LANDING_OFFSET (0816:010C) forward via real step_into() calls through the native AI bridge (tests/phase5a/dosbox_session.py's landing technique, unmodified), stopping exactly at the INT 21h instruction itself (0816:0120) without executing it. Segment 0816 is this run's real, DOS-assigned load segment -- it varies run to run; only the offsets and register VALUES are the fixed, reusable ground truth.",
+  "program": "STEP.COM",
+  "landing_segment_this_capture": "0816",
+  "trace": [
+    {"label": "landed at A (before executing MOV AX,1111h)", "eip": "010C", "instr": "mov  ax,1111", "registers": {"eax": "00000000", "ebx": "00000000", "ecx": "00000000", "edx": "00000816", "esi": "00000100", "edi": "0000FFFE", "ebp": "0000091C", "esp": "0000FFFE"}},
+    {"label": "after step to 010F", "eip": "010F", "instr": "mov  bx,2222", "registers": {"eax": "00001111", "ebx": "00000000", "ecx": "00000000", "edx": "00000816", "esi": "00000100", "edi": "0000FFFE", "ebp": "0000091C", "esp": "0000FFFE"}},
+    {"label": "after step to 0112", "eip": "0112", "instr": "call 00000122 ($+d)", "registers": {"eax": "00001111", "ebx": "00002222", "ecx": "00000000", "edx": "00000816", "esi": "00000100", "edi": "0000FFFE", "ebp": "0000091C", "esp": "0000FFFE"}},
+    {"label": "after step to 0122 (entered func1)", "eip": "0122", "instr": "mov  dx,4444", "registers": {"eax": "00001111", "ebx": "00002222", "ecx": "00000000", "edx": "00000816", "esi": "00000100", "edi": "0000FFFE", "ebp": "0000091C", "esp": "0000FFFC"}},
+    {"label": "after step to 0125", "eip": "0125", "instr": "ret", "registers": {"eax": "00001111", "ebx": "00002222", "ecx": "00000000", "edx": "00004444", "esi": "00000100", "edi": "0000FFFE", "ebp": "0000091C", "esp": "0000FFFC"}},
+    {"label": "after step to 0115 (returned from func1)", "eip": "0115", "instr": "mov  cx,3333", "registers": {"eax": "00001111", "ebx": "00002222", "ecx": "00000000", "edx": "00004444", "esi": "00000100", "edi": "0000FFFE", "ebp": "0000091C", "esp": "0000FFFE"}},
+    {"label": "after step to 0118", "eip": "0118", "instr": "call 00000126 ($+b)", "registers": {"eax": "00001111", "ebx": "00002222", "ecx": "00003333", "edx": "00004444", "esi": "00000100", "edi": "0000FFFE", "ebp": "0000091C", "esp": "0000FFFE"}},
+    {"label": "after step to 0126 (entered func2)", "eip": "0126", "instr": "mov  di,6666", "registers": {"eax": "00001111", "ebx": "00002222", "ecx": "00003333", "edx": "00004444", "esi": "00000100", "edi": "0000FFFE", "ebp": "0000091C", "esp": "0000FFFC"}},
+    {"label": "after step to 0129", "eip": "0129", "instr": "ret", "registers": {"eax": "00001111", "ebx": "00002222", "ecx": "00003333", "edx": "00004444", "esi": "00000100", "edi": "00006666", "ebp": "0000091C", "esp": "0000FFFC"}},
+    {"label": "after step to 011B (returned from func2)", "eip": "011B", "instr": "mov  si,5555", "registers": {"eax": "00001111", "ebx": "00002222", "ecx": "00003333", "edx": "00004444", "esi": "00000100", "edi": "00006666", "ebp": "0000091C", "esp": "0000FFFE"}},
+    {"label": "after step to 011E", "eip": "011E", "instr": "mov  ah,4C", "registers": {"eax": "00001111", "ebx": "00002222", "ecx": "00003333", "edx": "00004444", "esi": "00005555", "edi": "00006666", "ebp": "0000091C", "esp": "0000FFFE"}},
+    {"label": "after step to 0120 (stopped AT INT 21h, NOT executed)", "eip": "0120", "instr": "int  21", "registers": {"eax": "00004C11", "ebx": "00002222", "ecx": "00003333", "edx": "00004444", "esi": "00005555", "edi": "00006666", "ebp": "0000091C", "esp": "0000FFFE"}}
+  ],
+  "final_status_stopped_before_int21": {
+    "stopped": true,
+    "running": false,
+    "location": {"cs": "0816", "eip": "0120"},
+    "instruction": {"bytes": "CD 21", "text": "int  21"},
+    "registers": {"eax": "00004C11", "ebx": "00002222", "ecx": "00003333", "edx": "00004444", "esi": "00005555", "edi": "00006666", "ebp": "0000091C", "esp": "0000FFFE"},
+    "segments": {"cs": "0816", "ds": "0816", "es": "0816", "ss": "0816"},
+    "flags": {"eflags": "00007246"}
+  },
+  "key_finding": "AX = 0x4C11 (NOT 0x1111 and NOT 0x114C) at the point right before INT 21h -- MOV AH,4Ch only overwrites the high byte, so AL (0x11, set by the earlier MOV AX,1111h) is preserved: AH=0x4C, AL=0x11 -> AX=0x4C11. This is the semantic trap ai/Phase5B-3.md requires the B1 grader to catch."
+}
