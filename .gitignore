@@ -19,3 +19,22 @@ __pycache__/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Session-local scratch output: campaign traces, generated MCP configs,
+# OAuth/preflight artifacts, agent transcripts, evidence logs, one-off
+# driver scripts -- none of this is reproducible project source, all of
+# it is produced fresh by re-running the tests/tests.phase5c campaigns
+# documented in docs/. Never intended for publication.
+scratchpad/
+
+# Claude Code tool-local session state (session id/PID/lock files) --
+# not project source, regenerated per session.
+.claude/
+
+# Local logs / crash dumps, wherever they might land.
+*.log
+*.dmp
+
+# Local environment / secrets files, if ever created.
+.env
+.env.*
