@@ -1,5 +1,7 @@
 # DOSBox-X MCP Debugger
 
+*[English](README.md) | [繁體中文](README.zh-TW.md)*
+
 An experimental MCP integration that lets AI agents inspect and control the
 native DOSBox-X debugger through a bounded, auditable tool interface.
 
