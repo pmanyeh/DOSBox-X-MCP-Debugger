@@ -112,6 +112,16 @@ class DOSBoxAlreadyStopped(DOSBoxClientError):
     code = "ALREADY_STOPPED"
 
 
+class DOSBoxDebuggerStopped(DOSBoxClientError):
+    """A key/mouse input injection method (input.key.*, input.mouse.*) was
+    called while the DOSBox-X debugger is currently stopped (see native
+    error code DEBUGGER_STOPPED, Phase 6B). Input injection only reaches
+    the guest while Normal_Loop() has control, i.e. while execution is not
+    paused/breakpointed -- call continue_execution() first."""
+
+    code = "DEBUGGER_STOPPED"
+
+
 class DOSBoxExecutionTimeout(DOSBoxClientError):
     """pause_execution() or step_over() was requested but did not complete
     within the native bridge's timeout (see native error code
@@ -131,6 +141,7 @@ _NATIVE_ERROR_MAP = {
     "BREAKPOINT_ALREADY_EXISTS": DOSBoxBreakpointAlreadyExists,
     "ALREADY_RUNNING": DOSBoxAlreadyRunning,
     "ALREADY_STOPPED": DOSBoxAlreadyStopped,
+    "DEBUGGER_STOPPED": DOSBoxDebuggerStopped,
     "EXECUTION_TIMEOUT": DOSBoxExecutionTimeout,
 }
 
@@ -377,3 +388,68 @@ class DOSBoxClient:
         completed shortly after."""
 
         return self.request("execution.step_over")
+
+    # -- guest input injection (Phase 6B) --
+    #
+    # These inject keyboard/mouse input through the SAME internal path
+    # DOSBox-X's own SDL event handlers use (KEYBOARD_AddKey(), Mouse_*())
+    # -- never Windows SendKeys, window focus/handle manipulation, or GUI
+    # automation of the DOSBox-X window itself. Only valid while guest
+    # execution is running (i.e. NOT stopped in the debugger): raises
+    # DOSBoxDebuggerStopped (native DEBUGGER_STOPPED) otherwise -- call
+    # continue_execution() first.
+    #
+    # `key` names are a fixed, auditable whitelist covering the standard
+    # US 104-key layout (see ParseKeyName() in debug_ai.cpp) -- e.g. "a",
+    # "1", "f1", "enter", "leftshift", "kp5". Arbitrary text/scan codes are
+    # not accepted in this v1.
+
+    def key_down(self, key: str) -> dict:
+        """Press and hold `key`. The bridge tracks held keys per
+        connection and releases anything still held if this connection
+        disconnects (client crash or session timeout) -- see
+        release_all_input()."""
+
+        return self.request("input.key.down", {"key": key})
+
+    def key_up(self, key: str) -> dict:
+        """Release `key` (previously pressed with key_down())."""
+
+        return self.request("input.key.up", {"key": key})
+
+    def key_tap(self, key: str) -> dict:
+        """Press and immediately release `key` -- the common case for
+        advancing dialogue/menus (e.g. key_tap("enter"))."""
+
+        return self.request("input.key.tap", {"key": key})
+
+    def move_mouse_relative(self, dx: float, dy: float) -> dict:
+        """Move the guest mouse cursor by a relative (dx, dy) delta, the
+        same way real relative mouse motion does. Only affects the guest
+        if DOSBox-X's mouse is currently captured/locked (Ctrl+F10) and the
+        guest is running a mouse driver that reads relative motion -- this
+        does not itself toggle mouse capture."""
+
+        return self.request("input.mouse.move_relative", {"dx": dx, "dy": dy})
+
+    def set_mouse_button(self, button: int, pressed: bool) -> dict:
+        """Press or hold (pressed=True) / release (pressed=False) a mouse
+        button. `button` is 0 (left), 1 (right), or 2 (middle). Like
+        key_down(), held buttons are tracked per connection and
+        auto-released on disconnect."""
+
+        return self.request("input.mouse.button.set", {"button": button, "pressed": pressed})
+
+    def click_mouse(self, button: int) -> dict:
+        """Press and immediately release a mouse button. `button` is 0
+        (left), 1 (right), or 2 (middle)."""
+
+        return self.request("input.mouse.button.click", {"button": button})
+
+    def release_all_input(self) -> dict:
+        """Release every key/mouse button this connection currently holds
+        down. Call this at the end of a session as a good citizen -- the
+        bridge also does this automatically if the connection is lost
+        (client crash, session timeout) without it ever being called."""
+
+        return self.request("input.release_all")
