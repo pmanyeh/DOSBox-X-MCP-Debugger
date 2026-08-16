@@ -47,7 +47,7 @@ def get_project_status() -> dict:
 
     return {
         "project": "DOSBox-X AI Debugger",
-        "phase": "P4D",
+        "phase": "P6B",
         "dosbox_bridge": f"native ({dosbox.host}:{dosbox.port})",
         "debugger": "native",
         "mcp": "online",
@@ -143,6 +143,33 @@ def set_breakpoint(address: str) -> dict:
 
 
 @mcp.tool()
+def set_real_memory_breakpoint(address: str) -> dict:
+    """
+    Watch one byte at a real-mode "SEG:OFFSET" address on the real, running
+    DOSBox-X instance -- execution stops after the byte's value changes.
+    Uses the native debugger's BPPM mechanism; available only on
+    heavy-debug builds (INTERNAL_ERROR otherwise). Only meaningful while
+    the debugger is stopped when you create it (like set_breakpoint); the
+    watch itself then fires on a later continue_execution()/step, whenever
+    the byte's value actually changes.
+    """
+
+    return _guarded_native(dosbox.set_real_memory_breakpoint, address)
+
+
+@mcp.tool()
+def set_protected_memory_breakpoint(address: str) -> dict:
+    """
+    Watch one byte at a protected-mode "SELECTOR:OFFSET" address on the
+    real, running DOSBox-X instance -- execution stops after the byte's
+    value changes. Uses the native debugger's BPPM mechanism; available
+    only on heavy-debug builds (INTERNAL_ERROR otherwise).
+    """
+
+    return _guarded_native(dosbox.set_protected_memory_breakpoint, address)
+
+
+@mcp.tool()
 def delete_breakpoint(breakpoint_id: int) -> dict:
     """
     Delete a breakpoint by its id (as returned by set_breakpoint/
@@ -159,9 +186,10 @@ def delete_breakpoint(breakpoint_id: int) -> dict:
 @mcp.tool()
 def list_breakpoints() -> list:
     """
-    List all breakpoints currently set on the real, running DOSBox-X
-    instance -- the same breakpoints the debugger GUI's BPLIST command
-    would show.
+    List all code and memory breakpoints currently set on the real,
+    running DOSBox-X instance -- the same breakpoints the debugger GUI's
+    BPLIST command would show. Each entry's "type" is "code",
+    "memory" (real-mode watch), or "protected_memory".
     """
 
     return _guarded_native(dosbox.list_breakpoints)
@@ -229,6 +257,100 @@ def step_over() -> dict:
     """
 
     return _guarded_native(dosbox.step_over)
+
+
+@mcp.tool()
+def key_down(key: str) -> dict:
+    """
+    Press and hold a keyboard key on the real, running DOSBox-X instance,
+    through the SAME internal path DOSBox-X's own SDL keyboard handler
+    uses (KEYBOARD_AddKey()) -- never OS-level key injection or window
+    automation. `key` is a name from a fixed whitelist covering the
+    standard US 104-key layout (e.g. "a", "1", "f1", "enter", "space",
+    "leftshift", "leftctrl", "up", "kp5") -- an unrecognized name fails
+    with INVALID_PARAMETER. Only valid while guest execution is running;
+    fails with DEBUGGER_STOPPED otherwise (call continue_execution()
+    first). Held keys are tracked per MCP session and automatically
+    released if the connection is lost before key_up() is called -- see
+    release_all_input().
+    """
+
+    return _guarded_native(dosbox.key_down, key)
+
+
+@mcp.tool()
+def key_up(key: str) -> dict:
+    """
+    Release a keyboard key previously pressed with key_down(). Same key
+    name whitelist and running-only precondition as key_down().
+    """
+
+    return _guarded_native(dosbox.key_up, key)
+
+
+@mcp.tool()
+def key_tap(key: str) -> dict:
+    """
+    Press and immediately release a keyboard key on the real, running
+    DOSBox-X instance -- the common case for advancing dialogue/menus
+    (e.g. key_tap("enter")). Same key name whitelist and running-only
+    precondition as key_down().
+    """
+
+    return _guarded_native(dosbox.key_tap, key)
+
+
+@mcp.tool()
+def move_mouse_relative(dx: float, dy: float) -> dict:
+    """
+    Move the guest mouse cursor by a relative (dx, dy) delta, through the
+    SAME internal path DOSBox-X's own SDL mouse handler uses
+    (Mouse_CursorMoved()). Only valid while guest execution is running;
+    fails with DEBUGGER_STOPPED otherwise. Only reaches the guest if
+    DOSBox-X's mouse is currently captured (Ctrl+F10) and the guest is
+    running a driver that reads relative motion -- this call does not
+    itself toggle mouse capture.
+    """
+
+    return _guarded_native(dosbox.move_mouse_relative, dx, dy)
+
+
+@mcp.tool()
+def set_mouse_button(button: int, pressed: bool) -> dict:
+    """
+    Press/hold (pressed=true) or release (pressed=false) a mouse button on
+    the real, running DOSBox-X instance. `button` is 0 (left), 1 (right),
+    or 2 (middle). Only valid while guest execution is running; fails with
+    DEBUGGER_STOPPED otherwise. Like key_down(), held buttons are tracked
+    per MCP session and auto-released if the connection is lost.
+    """
+
+    return _guarded_native(dosbox.set_mouse_button, button, pressed)
+
+
+@mcp.tool()
+def click_mouse(button: int) -> dict:
+    """
+    Press and immediately release a mouse button on the real, running
+    DOSBox-X instance. `button` is 0 (left), 1 (right), or 2 (middle).
+    Only valid while guest execution is running; fails with
+    DEBUGGER_STOPPED otherwise.
+    """
+
+    return _guarded_native(dosbox.click_mouse, button)
+
+
+@mcp.tool()
+def release_all_input() -> dict:
+    """
+    Release every key/mouse button this MCP session currently holds down
+    on the real, running DOSBox-X instance. Call this at the end of a
+    session that used key_down()/set_mouse_button(pressed=true) as a good
+    citizen -- the native bridge also does this automatically if the
+    connection is lost without it ever being called.
+    """
+
+    return _guarded_native(dosbox.release_all_input)
 
 
 if __name__ == "__main__":
