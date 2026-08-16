@@ -245,6 +245,8 @@ committed -- it's safe to delete at any time and is already `.gitignore`d.
 - **[AI Agent Usage Guide](AGENT_GUIDE.md)** -- required environment,
   installation, every MCP tool an agent can call, error codes, and example
   workflows. Start here if you're connecting an agent to this project.
+- **[Changelog](CHANGELOG.md)** -- notable changes by development phase,
+  in English and Traditional Chinese together.
 - [Phase 5C transport design](docs/phase5c-real-mcp-transport-design.md)
 - [Phase 5C final report](docs/phase5c-final-report.md)
 - [Phase 5C implemented-state checkpoint](docs/phase5c-implemented-state-checkpoint.md)

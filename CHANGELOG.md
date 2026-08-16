@@ -1,0 +1,176 @@
+# Changelog
+
+All notable changes to this project are documented here, grouped by
+development phase (this project's own milestone convention -- see
+`docs/`) rather than by date or semantic version, since no formal
+release/version-number scheme exists yet. Each entry is presented in
+English and Traditional Chinese together.
+
+所有值得記錄的變更都整理在這裡，依照本專案自己的里程碑慣例（「Phase」，
+詳見 `docs/`）分組，而不是依日期或語意化版本號——因為目前還沒有正式的
+發行／版本號機制。每一條都會同時附上英文與繁體中文。
+
+---
+
+## Phase 7A — Guest frame capture (2026-08-16)
+
+**English**
+
+- Added `video.frame.capture` to the native AI bridge: captures exactly
+  the guest's own rendered frame (never the DOSBox-X window, the host
+  desktop, or any other host window) as PNG or raw RGBA8888, without
+  stopping guest execution or ever writing to disk.
+- Reuses DOSBox-X's own existing screenshot/AVI-recording hook point
+  (`RENDER_EndUpdate()` / `CAPTURE_AddImage()`), confirmed
+  backend-agnostic (same call site regardless of software/OpenGL/
+  Direct3D/Voodoo output) by source investigation before implementation.
+- Added `DOSBoxClient.capture_frame()` and the `capture_frame` MCP tool
+  (`ai/server.py`) -- returns a directly viewable image for
+  `format="png"`, or exact pixel data for `format="rgba"`. Agent-visible
+  tool count: 26.
+- New error code `FRAME_TOO_LARGE`, with a suggested smaller
+  `max_width`/`max_height` in the message, for frames exceeding the
+  bridge's payload cap.
+- Verified live against a real DOSBox-X instance, including a
+  pixel-level cross-check (RGBA output vs. Pillow's decode of the same
+  frame's PNG output, 400 sample points, 0 mismatches) that specifically
+  catches an R/B channel-order pitfall identified during design.
+- See `docs/phase7a-frame-capture-design.md` for the full design and
+  verification notes, and `docs/phase7-observability-and-autonomous-control-requirements.md`
+  for the broader Phase 7 requirements this is scoped from.
+
+**繁體中文**
+
+- 為原生 AI 橋接層新增 `video.frame.capture`：擷取的是客體自己算出來的
+  畫面本身（絕不是 DOSBox-X 視窗、主機桌面，或其他主機視窗），可輸出
+  PNG 或原始 RGBA8888，不會停止客體執行，也絕不寫入主機磁碟。
+- 重用 DOSBox-X 自己既有的截圖／AVI 錄影掛鉤點
+  （`RENDER_EndUpdate()` / `CAPTURE_AddImage()`），實作前已透過原始碼
+  調查確認與輸出後端無關（不論 software／OpenGL／Direct3D／Voodoo，
+  都是同一個呼叫點）。
+- 新增 `DOSBoxClient.capture_frame()` 與 `capture_frame` MCP
+  工具（`ai/server.py`）——`format="png"` 會回傳可直接檢視的圖片，
+  `format="rgba"` 則回傳精確像素資料。Agent 可見工具數：26 個。
+- 新增錯誤代碼 `FRAME_TOO_LARGE`，超過橋接層負載上限時，錯誤訊息會附上
+  建議縮小後的 `max_width`／`max_height`。
+- 已對真實運行中的 DOSBox-X 做過實機驗證，包含像素級交叉比對（RGBA
+  輸出 vs. 同一畫面 PNG 輸出經 Pillow 解碼後的結果，400 個取樣點、0 個
+  不一致）——這正是設計階段就點名的 R/B 色版順序風險的驗證。
+- 完整設計與驗證細節見 `docs/phase7a-frame-capture-design.md`；此功能
+  所依據的完整 Phase 7 需求見
+  `docs/phase7-observability-and-autonomous-control-requirements.md`。
+
+---
+
+## Phase 6B — Keyboard & mouse input injection (2026-08-16)
+
+**English**
+
+- Added `input.key.down/up/tap` and `input.mouse.move_relative/
+  button.set/button.click/release_all` to the native AI bridge --
+  keyboard/mouse input delivered through the SAME internal path DOSBox-X's
+  own SDL event handlers use (`KEYBOARD_AddKey()`, `Mouse_CursorMoved()`,
+  `Mouse_ButtonPressed()`/`Mouse_ButtonReleased()`). No `SendKeys`, window
+  focus/handle manipulation, or GUI automation anywhere in this path.
+- Input injection only reaches the guest while it is actually running
+  (not stopped), mirroring `execution.pause`'s existing
+  `Normal_Loop()`-hook architecture rather than the request queue used by
+  every earlier method.
+- Stuck-key/button safety: held keys/buttons are tracked per connection
+  and automatically released if the connection is lost (client crash,
+  session timeout) before an explicit release -- verified live by holding
+  a key down and abruptly disconnecting, then confirming the bridge and a
+  fresh connection both stayed healthy afterward.
+- `key` names are a fixed, auditable whitelist (the standard US 104-key
+  layout) -- not free text or raw scan codes.
+- Wired into `DOSBoxClient` and the `ai/server.py` MCP tool surface
+  (bringing the tool count to 25 before Phase 7A's addition).
+- See `docs/phase6b-input-injection-design.md` for the full design.
+
+**繁體中文**
+
+- 為原生 AI 橋接層新增 `input.key.down/up/tap` 與
+  `input.mouse.move_relative`／`button.set`／`button.click`／
+  `release_all`——鍵盤／滑鼠輸入是透過與 DOSBox-X 自己的 SDL
+  事件處理常式完全相同的內部路徑送出（`KEYBOARD_AddKey()`、
+  `Mouse_CursorMoved()`、`Mouse_ButtonPressed()`／`Mouse_ButtonReleased()`），
+  整條路徑上沒有 `SendKeys`、視窗焦點／控制代碼操作，也沒有 GUI 自動化。
+- 輸入注入只有在客體真正執行中（非停止狀態）才能送達，沿用的是
+  `execution.pause` 既有的 `Normal_Loop()` 掛鉤架構，而不是先前每個方法
+  都用的請求佇列機制。
+- 按鍵／按鈕卡住的防護：每個連線都會追蹤目前按住的按鍵／按鈕，若連線
+  在明確釋放前遺失（客戶端當掉、工作階段逾時），會自動釋放——已透過
+  實機測試驗證：按住一個按鍵後突然斷線，之後橋接層與新連線都維持正常。
+- `key` 的名稱是固定、可稽核的白名單（標準美式 104 鍵配列），不是自由
+  文字或原始 scan code。
+- 已接上 `DOSBoxClient` 與 `ai/server.py` 的 MCP 工具介面（在 Phase 7A
+  加入前，工具數來到 25 個）。
+- 完整設計見 `docs/phase6b-input-injection-design.md`。
+
+---
+
+## Phase 6A — Real-mode & protected-mode memory watchpoints (2026-08-16)
+
+**English**
+
+- Confirmed, committed, and wired into the MCP tool surface:
+  `set_real_memory_breakpoint()`/`set_protected_memory_breakpoint()`
+  (native `breakpoint.memory.real.set`/`breakpoint.memory.set`), watching
+  one byte at a real-mode `SEG:OFFSET` or protected-mode
+  `SELECTOR:OFFSET` address and stopping execution after it changes,
+  using the native debugger's own BPPM mechanism (heavy-debug builds
+  only).
+- `list_breakpoints()` now reports each breakpoint's `type` ("code",
+  "memory", or "protected_memory") instead of silently omitting
+  non-code breakpoints.
+- This work existed in the submodule but was uncommitted at the start of
+  this session; committed here along with the Python client wrapper and
+  MCP tool registration that had never been wired up.
+
+**繁體中文**
+
+- 確認、commit，並接上 MCP 工具介面：
+  `set_real_memory_breakpoint()`／`set_protected_memory_breakpoint()`
+  （原生方法 `breakpoint.memory.real.set`／`breakpoint.memory.set`），
+  監看 real-mode `SEG:OFFSET` 或 protected-mode `SELECTOR:OFFSET`
+  位址上的一個位元組，該值改變後就停止執行，使用的是原生除錯器自己的
+  BPPM 機制（僅限 heavy-debug 建置）。
+- `list_breakpoints()` 現在會回報每個中斷點的 `type`（`"code"`、
+  `"memory"` 或 `"protected_memory"`），不再悄悄跳過非程式碼中斷點。
+- 這部分工作在本次 session 開始前就已經在子模組中實作完成，但尚未
+  commit；本次一併 commit，並補上先前從未接上的 Python client 包裝與
+  MCP 工具註冊。
+
+---
+
+## Documentation & tooling / 文件與工具（2026-08-16）
+
+**English**
+
+- Added `AGENT_GUIDE.md` / `AGENT_GUIDE.zh-TW.md`: the reference for an
+  AI agent connecting to this project -- required environment,
+  installation/build steps, a full tool reference table, the native
+  error code catalog, and example workflows.
+- Added `docs/phase6-test-plan.md`: concrete (not yet implemented)
+  automated test cases for Phase 6A/6B.
+- Added `docs/phase7-observability-and-autonomous-control-requirements.md`
+  (the Phase 7 requirements draft) and
+  `docs/case-study-dark-sun-gpli-debugging.md` (a worked example using
+  the memory-watchpoint tools).
+- `.gitignore`: added a `/build-*/` pattern for local scratch deployment
+  copies of the built binary (e.g. `build-memory/`, `build-selector/`),
+  never meant to be committed.
+
+**繁體中文**
+
+- 新增 `AGENT_GUIDE.md`／`AGENT_GUIDE.zh-TW.md`：給連線到本專案的 AI
+  agent 使用的參考手冊——所需環境、安裝／建置步驟、完整工具參考表、
+  原生錯誤代碼對照，以及範例工作流程。
+- 新增 `docs/phase6-test-plan.md`：Phase 6A／6B 具體（尚未實作）的
+  自動化測試案例。
+- 新增 `docs/phase7-observability-and-autonomous-control-requirements.md`
+  （Phase 7 需求草案）與 `docs/case-study-dark-sun-gpli-debugging.md`
+  （一篇使用記憶體監看點工具的實戰案例）。
+- `.gitignore`：新增 `/build-*/` 規則，排除本機用來測試的建置成果
+  臨時複本（例如 `build-memory/`、`build-selector/`），這些從來就不該
+  被 commit。

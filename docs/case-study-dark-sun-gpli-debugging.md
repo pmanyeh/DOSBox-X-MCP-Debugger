@@ -231,15 +231,17 @@ API 沒有提供這三者。
   時才有效；方法本身不切換 capture。
 - `input.*` 的 `{tapped:true}`／`{clicked:true}` 只表示 bridge 成功 dispatch，不表示遊戲 UI
   已採用輸入。
-- bridge 沒有 framebuffer capture，因此為了看畫面而採用主機桌面截圖會受 DPI、視窗位置、
-  遮蔽與其他使用者視窗干擾。
+- 2026-08-16 起，Phase 7A 已提供 `capture_frame()`：它直接由客體 renderer 擷取 frame，
+  不含主機桌面、DOSBox 視窗框或主機游標。先前依賴主機桌面截圖的限制已解除。
+- Phase 7A 尚未提供 capture 狀態查詢／切換與絕對座標點擊；這兩項仍是 UI 自動化的主要
+  缺口。
 - 對真實遊戲 UI，只有相對位移而沒有 `click_at(x,y)`，會使 agent 無法可靠重現一次操作。
 
 ### 本案的正確替代策略
 
 - 需要立即完成遊戲回歸時：由使用者操作，agent 只在明確的停止點進行讀取／除錯。
-- 需要全自動流程時：先實作 Phase 7 的 framebuffer、capture get/set、絕對點擊與 receipt，
-  再嘗試 UI 自動化。
+- 需要全自動流程時：先用已實作的 `capture_frame()` 取得客體狀態；再完成 Phase 7 剩餘的
+  capture get/set、絕對點擊與 receipt，才嘗試可靠的 UI 自動化。
 - 不建議把 OS-level window focus／SendKeys／桌面滑鼠注入當成 bridge 的正式替代品；它依賴
   主機桌面狀態，也違反 Phase 6B 對客體內部輸入路徑的設計界線。
 
@@ -247,7 +249,7 @@ API 沒有提供這三者。
 
 | 缺口 | 本案後果 | Phase 7 對應 |
 |---|---|---|
-| 無直接 frame | agent 看不到可靠客體狀態 | Epic A |
+| 已有直接 frame | agent 可可靠觀測客體畫面 | Phase 7A 已完成 |
 | 無 capture state | 不知道 relative motion 是否有效 | Epic B |
 | 無 absolute click | 無法選定 UI 上的確切目標 | Epic B |
 | 僅有 dispatch 回應 | 無法分辨遊戲忽略輸入或位置不對 | Epic C + screenshot／watchpoint |

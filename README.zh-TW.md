@@ -240,6 +240,7 @@ dosbox-src\bin\x64\Release\dosbox-x.exe -break-start drive_c\STEP.COM
 - **[AI Agent 使用說明](AGENT_GUIDE.zh-TW.md)**——所需環境、安裝步驟、
   agent 可呼叫的每一個 MCP 工具、錯誤代碼，以及範例工作流程。若您要把
   agent 接上本專案，請從這裡開始。
+- **[更新日誌](CHANGELOG.md)**——依開發階段整理的重要變更，中英文並呈。
 - [Phase 5C 傳輸層設計](docs/phase5c-real-mcp-transport-design.md)
 - [Phase 5C 最終報告](docs/phase5c-final-report.md)
 - [Phase 5C 實作狀態檢查點](docs/phase5c-implemented-state-checkpoint.md)
