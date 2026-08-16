@@ -38,3 +38,11 @@ scratchpad/
 # Local environment / secrets files, if ever created.
 .env
 .env.*
+
+# Ad hoc local "run copies" of the built DOSBox-X binary (dosbox-x.exe,
+# .pdb, and its full runtime asset set), made at the repo root for manual
+# testing convenience -- e.g. build-memory/, build-selector/. The real
+# build output lives in dosbox-src/bin/ (already git-ignored inside the
+# submodule); these are just scratch deployment copies, tens/hundreds of
+# MB each, never meant to be committed.
+/build-*/
