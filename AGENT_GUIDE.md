@@ -126,7 +126,7 @@ Example MCP server config (adjust paths to your clone location):
 }
 ```
 
-`ai/server.py` is the unbounded, general-purpose tool surface (25 tools,
+`ai/server.py` is the unbounded, general-purpose tool surface (26 tools,
 listed below) and is the one intended for normal agent use. Two other MCP
 entry points exist for specific, narrower purposes and are **not** what
 most agents should connect to:
@@ -149,7 +149,7 @@ rather than a `DOSBOX_NOT_CONNECTED` error.
 
 ## Available tools
 
-25 tools, grouped by what they do. "Precondition" is the debugger state a
+26 tools, grouped by what they do. "Precondition" is the debugger state a
 call requires; calling it in the wrong state returns a specific error
 (see [Error codes](#error-codes)) rather than blocking or silently doing
 nothing.
@@ -266,6 +266,33 @@ DOSBox-X's mouse is captured (`Ctrl+F10`) and the guest is running a
 driver that reads relative motion -- this call does not itself toggle
 mouse capture. Button press/click do not have this dependency.
 
+### Frame capture
+
+| Tool | Parameters | Returns | Precondition |
+|---|---|---|---|
+| `capture_frame` | `format: "png"\|"rgba"` (default `"png"`), `max_width: int` (optional), `max_height: int` (optional) | `format="png"`: a directly viewable image plus a metadata block (`frame_id`, `width`, `height`, `captured_at_emulated_ms`); `format="rgba"`: `{"frame_id", "width", "height", "pixel_format": "rgba8888", "rgba_base64", ...}` | meaningful whether stopped or running, but see below |
+
+Captures exactly the guest's own rendered frame -- never the DOSBox-X
+window, the host desktop, or any other host window -- through the same
+internal hook DOSBox-X's own screenshot/AVI recording already use.
+Nothing is ever written to disk on the host. Use `"png"` (the default)
+when you want to actually look at the picture; use `"rgba"` when you
+need exact pixel values (e.g. cross-checking a known color at a known
+coordinate) rather than a viewable image.
+
+`max_width`/`max_height` downscale the result (nearest-neighbor, aspect
+ratio preserved) if the native frame would exceed them; omit both for
+native resolution. If the encoded frame still exceeds the bridge's
+payload cap, the call fails with `FRAME_TOO_LARGE`, whose message
+includes a suggested smaller `max_width`/`max_height` to retry with --
+the frame is never silently truncated.
+
+**A fully halted guest is not producing new rendered frames** (VGA frame
+timing is driven by hardware events that only fire while the guest is
+actually running) -- calling `capture_frame` while the debugger is
+stopped will usually time out (`EXECUTION_TIMEOUT`) rather than return
+instantly. Call `continue_execution()` first for a reliable capture.
+
 ## Error codes
 
 Every failure comes back as a structured `{"code", "message"}` error
@@ -286,6 +313,7 @@ specifically branch on:
 | `INVALID_PARAMETER` | Malformed/out-of-range/unrecognized parameter (e.g. unknown key name, bad mouse button) | Fix the parameter, don't retry as-is |
 | `INVALID_ADDRESS` | Malformed `"SEG:OFF"`/`"SELECTOR:OFFSET"` string | Fix the address format |
 | `INTERNAL_ERROR` | Native bridge failure, e.g. a memory watchpoint on a non-heavy-debug build | Not retryable without changing the build/environment |
+| `FRAME_TOO_LARGE` | `capture_frame`'s encoded frame exceeds the bridge's payload cap | Retry with the `suggested_max_width`/`suggested_max_height` in the error message |
 | `DOSBOX_NOT_CONNECTED` | Client-side: bridge unreachable (DOSBox-X not running, or not built with `C_DEBUG`) | Start/relaunch DOSBox-X |
 | `DOSBOX_TIMEOUT` | Client-side: bridge didn't answer in time | Usually transient; may indicate DOSBox-X is stuck |
 
@@ -334,6 +362,9 @@ key_tap("enter")                          # trigger the next step
   codes, in this version.
 - Mouse relative movement depends on DOSBox-X mouse capture state, which
   this tool set does not itself control.
+- `capture_frame` does not yet support `include_cursor: true` (rejected
+  with `INVALID_PARAMETER`) -- guest cursor compositing is a documented
+  open question, not silently ignored.
 - This is an engineering preview, not a finished product -- see
   `README.md` for the project's honestly-reported Phase 5C acceptance
   result before relying on it for unattended, high-stakes use.

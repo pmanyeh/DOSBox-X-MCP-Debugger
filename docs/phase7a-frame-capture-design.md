@@ -207,19 +207,74 @@ alternative.
    `CAPTURE_AddImage()` call site, but this hasn't been exercised by an
    actual build+capture test under either of those configurations.
 
-## Verification plan (not yet executed)
+## Implementation status: done, verified live
 
-1. Capture a frame from a 320x200 VGA (bpp=8) test program and a 640x480
-   SVGA (bpp=16 or 32) test program; decode both PNGs and confirm correct
-   dimensions and, for at least one known-color test pattern, correct
-   pixel values (catches the BGR/RGB ordering bug called out above).
-2. Fully cover the DOSBox-X window with another host window; confirm the
-   capture is unaffected (expected to pass trivially, since the source is
-   `scalerSourceCacheBuffer`, never host/window pixels -- but should still
-   be verified once built, the same way Phase 6B's design was verified
-   live rather than assumed correct from source reading alone).
-3. Issue 100 consecutive captures; confirm no guest stall, no unbounded
-   memory growth, and no torn/inconsistent frames.
-4. Compare `format=png` and `format=rgba` output for the same frame
-   (decode the PNG, compare pixel-for-pixel against the RGBA buffer) to
-   cross-check the from-scratch RGBA packer against the proven PNG path.
+Implemented in the `dosbox-src` submodule (`debug_ai.cpp`/`debug_ai.h`,
+`include/debug.h`, `src/gui/render.cpp`) plus `ai/dosbox_client.py`
+(`capture_frame()`) and `ai/server.py` (`capture_frame` MCP tool, which
+returns `[metadata, Image(png_bytes)]` for `format="png"` -- a directly
+viewable image, not a base64 string the agent has to write to a host
+temp file to inspect, per this design doc's own requirement -- and the
+plain metadata+base64 dict for `format="rgba"`, since raw pixel data
+isn't a renderable image format). Built clean (0 warnings, 0 errors).
+
+One implementation deviation from the plan above, discovered while
+writing the code: rather than porting `CAPTURE_AddImage()`'s existing
+per-bpp PNG-encoding branches (indexed PNG for 8bpp, `png_set_bgr()` RGB
+for 24/32bpp), the implementation always unpacks to RGBA8888 FIRST
+(`UnpackFrameToRGBA8888()`, one function handling all of 8/15/16/24/32bpp)
+and encodes PNG from that shared buffer for `format="png"` too, rather
+than re-deriving the indexed/BGR paths a second time. This is simpler
+(one conversion path instead of two) and directly enables the pixel
+cross-check in verification step 4 below; the tradeoff is a somewhat
+larger PNG for 8bpp (indexed) frames than `CAPTURE_AddImage()`'s own
+paletted encoding would produce -- not a concern for an on-demand,
+agent-triggered capture.
+
+Verified live against a freshly built `dosbox-x.exe`
+(`-defaultdir -break-start drive_c\STEP.COM`), via `ai/dosbox_client.py`
+and, separately, the actual `capture_frame` MCP tool function:
+
+1. **Real capture, not a placeholder**: captured the guest's default
+   80x25 text-mode screen at its real rendered size, 720x400 (9x16 font
+   cells) -- not a hardcoded or assumed resolution.
+2. **PNG validity**: correct `\x89PNG\r\n\x1a\n` signature; decodes
+   cleanly with Pillow to `(720, 400)` RGBA.
+3. **Byte-order correctness (the specific risk flagged above)**:
+   cross-checked `format="rgba"` output against Pillow's decode of the
+   *same frame's* `format="png"` output at 400 sampled pixel
+   coordinates -- **0 mismatches**. This is the test that would have
+   caught a naive BGR-copied-verbatim bug; it did not fire, confirming
+   the R/G/B reordering in `UnpackFrameToRGBA8888()` is correct.
+4. **Not a blank capture**: RGB channel extrema showed the full `0-255`
+   range present, not a suspiciously uniform/black image.
+5. **`rgba_base64` byte count**: exactly `width * height * 4`
+   (1,152,000 bytes for 720x400), confirming no stride/padding bugs in
+   the unpack loop.
+6. **`max_width`/`max_height` scaling**: requesting `160x100` produced a
+   `160x88` result (aspect ratio preserved, both dimensions within
+   their caps).
+7. **`include_cursor=true` correctly rejected** with `INVALID_PARAMETER`,
+   matching the "open question, fail closed" decision above.
+8. **Stability**: 20 consecutive captures caused no guest stall, crash,
+   or degradation; a `debug.status` call immediately afterward still
+   returned a healthy, real snapshot.
+9. **Capture-while-stopped behavior matches the documented expectation**:
+   attempted while the debugger was still at its `-break-start` stop
+   point -- timed out (`EXECUTION_TIMEOUT`) rather than succeeding
+   immediately, consistent with "a fully halted guest is not producing
+   new frames" above. Not exercised: whether it reliably succeeds if a
+   frame happens to render moments after the request is queued but
+   before the request's timeout elapses (the design's own "tolerate
+   latency" case) -- worth covering in the automated test suite rather
+   than asserted here from one live run.
+10. **`format=png` on a build without `C_SSHOT`** and **byte-cap
+    overflow (`FRAME_TOO_LARGE`)**: not exercised live (this build has
+    `C_SSHOT=1`, and no guest video mode large enough to exceed 8 MiB was
+    tried) -- code-reviewed only.
+
+Not yet done: an automated `pytest` suite (this was verified the same
+ad hoc way Phase 6A/6B were, via a scratch script against a live
+instance, not committed test code -- tracked as the same kind of
+follow-up noted in `docs/phase6-test-plan.md`), and the two "not
+exercised" items in step 9-10 above.

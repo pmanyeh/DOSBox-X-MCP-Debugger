@@ -133,6 +133,17 @@ class DOSBoxExecutionTimeout(DOSBoxClientError):
     code = "EXECUTION_TIMEOUT"
 
 
+class DOSBoxFrameTooLarge(DOSBoxClientError):
+    """capture_frame() produced an encoded frame larger than the native
+    bridge's payload cap (see native error code FRAME_TOO_LARGE, Phase
+    7A). The error's message includes the native bridge's
+    suggested_max_width/suggested_max_height -- retry capture_frame()
+    with those (or smaller) max_width/max_height values rather than
+    assuming any fixed size works for every guest video mode."""
+
+    code = "FRAME_TOO_LARGE"
+
+
 _NATIVE_ERROR_MAP = {
     "DEBUGGER_NOT_STOPPED": DOSBoxDebuggerNotStopped,
     "MEMORY_ERROR": DOSBoxMemoryError,
@@ -143,6 +154,7 @@ _NATIVE_ERROR_MAP = {
     "ALREADY_STOPPED": DOSBoxAlreadyStopped,
     "DEBUGGER_STOPPED": DOSBoxDebuggerStopped,
     "EXECUTION_TIMEOUT": DOSBoxExecutionTimeout,
+    "FRAME_TOO_LARGE": DOSBoxFrameTooLarge,
 }
 
 
@@ -453,3 +465,42 @@ class DOSBoxClient:
         (client crash, session timeout) without it ever being called."""
 
         return self.request("input.release_all")
+
+    # -- guest framebuffer capture (Phase 7A) --
+
+    def capture_frame(
+        self,
+        format: str = "png",
+        max_width: Optional[int] = None,
+        max_height: Optional[int] = None,
+    ) -> dict:
+        """Capture exactly the guest's own rendered frame -- never the
+        DOSBox-X window, the host desktop, or any other host window --
+        through the SAME internal hook DOSBox-X's own Host+P screenshot
+        and AVI recording already use (RENDER_EndUpdate(), never written
+        to disk here). `format` is "png" or "rgba" (raw rgba8888,
+        base64-encoded either way, under "png_base64"/"rgba_base64" in
+        the result). Native pixel data (indexed/15-bit/16-bit/24-bit/
+        32-bit) is always unpacked to rgba8888 before encoding, regardless
+        of format.
+
+        Meaningful whether the debugger is stopped or running, but a
+        fully halted guest is not producing new rendered frames (VGA
+        vertical-retrace events are PIC-driven and don't fire while
+        Normal_Loop() doesn't have control) -- expect
+        DOSBoxExecutionTimeout in that case more often than not; call
+        continue_execution() first for reliable captures.
+
+        `max_width`/`max_height` downscale (nearest-neighbor, aspect
+        ratio preserved) if the native frame would exceed them; omit for
+        native resolution. Raises DOSBoxFrameTooLarge (native
+        FRAME_TOO_LARGE) if the encoded frame still exceeds the bridge's
+        payload cap -- its message includes a suggested smaller
+        max_width/max_height to retry with."""
+
+        params = {"format": format, "include_cursor": False}
+        if max_width is not None:
+            params["max_width"] = max_width
+        if max_height is not None:
+            params["max_height"] = max_height
+        return self.request("video.frame.capture", params)

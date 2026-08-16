@@ -1,4 +1,6 @@
-from mcp.server.mcpserver import MCPServer
+import base64
+
+from mcp.server.mcpserver import Image, MCPServer
 
 from dosbox_client import DOSBoxClient, DOSBoxClientError
 from protocol import error as protocol_error
@@ -351,6 +353,38 @@ def release_all_input() -> dict:
     """
 
     return _guarded_native(dosbox.release_all_input)
+
+
+@mcp.tool()
+def capture_frame(format: str = "png", max_width: int = None, max_height: int = None):
+    """
+    Capture exactly the guest's own rendered frame on the real, running
+    DOSBox-X instance -- never the DOSBox-X window, the host desktop, or
+    any other host window -- through the SAME internal hook DOSBox-X's
+    own screenshot/AVI recording already use (never written to disk
+    here). `format` is "png" (default, returned as a directly viewable
+    image) or "rgba" (raw rgba8888 bytes, base64-encoded, for precise
+    pixel-level inspection rather than viewing). Optional
+    max_width/max_height downscale (nearest-neighbor, aspect ratio
+    preserved) if the native frame would exceed them.
+
+    Meaningful whether the debugger is stopped or running, but a fully
+    halted guest is not producing new rendered frames -- expect
+    EXECUTION_TIMEOUT more often than not in that case; call
+    continue_execution() first for reliable captures. Fails with
+    FRAME_TOO_LARGE (with a suggested smaller max_width/max_height in the
+    error) if the encoded frame exceeds the bridge's payload cap.
+    """
+
+    result = _guarded_native(dosbox.capture_frame, format, max_width, max_height)
+    if isinstance(result, dict) and "error" in result:
+        return result
+
+    if format == "png":
+        metadata = {k: v for k, v in result.items() if k != "png_base64"}
+        return [metadata, Image(data=base64.b64decode(result["png_base64"]), format="png")]
+
+    return result
 
 
 if __name__ == "__main__":
