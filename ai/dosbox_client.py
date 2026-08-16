@@ -294,6 +294,20 @@ class DOSBoxClient:
 
         return self.request("breakpoint.set", {"address": address})
 
+    def set_protected_memory_breakpoint(self, address: str) -> dict:
+        """Watch one byte at a protected-mode ``SELECTOR:OFFSET`` address.
+
+        Execution stops after the byte's value changes. This uses the native
+        debugger's BPPM mechanism and is available only in heavy-debug builds.
+        """
+
+        return self.request("breakpoint.memory.set", {"address": address})
+
+    def set_real_memory_breakpoint(self, address: str) -> dict:
+        """Watch one byte at a real-mode ``SEGMENT:OFFSET`` address."""
+
+        return self.request("breakpoint.memory.real.set", {"address": address})
+
     def delete_breakpoint(self, breakpoint_id: int) -> dict:
         """Delete a breakpoint by id (as returned by set_breakpoint/
         list_breakpoints). Ids are positions in DOSBox-X's own breakpoint
@@ -304,8 +318,7 @@ class DOSBoxClient:
         return self.request("breakpoint.delete", {"id": breakpoint_id})
 
     def list_breakpoints(self) -> list:
-        """List all physical (address) breakpoints currently in DOSBox-X's
-        own breakpoint list."""
+        """List code and memory breakpoints in DOSBox-X's own list."""
 
         result = self.request("breakpoint.list")
         return result.get("breakpoints", []) if isinstance(result, dict) else []
