@@ -52,6 +52,11 @@ disassembly are backed by the native DOSBox-X debugger mechanisms.
 
 ## Agent-visible tools
 
+This section covers the bounded Phase 5C research surface specifically
+(used for this project's own controlled acceptance testing). For the
+general-purpose, unbounded 25-tool surface a normal agent should actually
+connect to, see the [AI Agent Usage Guide](AGENT_GUIDE.md).
+
 The current bounded Phase 5C surface exposes 12 tools:
 
 | Category | Tools |
@@ -237,6 +242,9 @@ committed -- it's safe to delete at any time and is already `.gitignore`d.
 
 ## Documentation
 
+- **[AI Agent Usage Guide](AGENT_GUIDE.md)** -- required environment,
+  installation, every MCP tool an agent can call, error codes, and example
+  workflows. Start here if you're connecting an agent to this project.
 - [Phase 5C transport design](docs/phase5c-real-mcp-transport-design.md)
 - [Phase 5C final report](docs/phase5c-final-report.md)
 - [Phase 5C implemented-state checkpoint](docs/phase5c-implemented-state-checkpoint.md)

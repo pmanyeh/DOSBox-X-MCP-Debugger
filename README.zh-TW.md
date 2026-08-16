@@ -49,6 +49,10 @@ flowchart LR
 
 ## Agent 可見的工具
 
+本章節說明的是專門用於受限的 Phase 5C 研究介面（供本專案自己的受控驗收
+測試使用）。若要找一般 agent 應該連線、不受限的 25 個工具通用介面，
+請見〈[AI Agent 使用說明](AGENT_GUIDE.zh-TW.md)〉。
+
 目前受限的 Phase 5C 介面共暴露 12 個工具：
 
 | 分類 | 工具 |
@@ -233,6 +237,9 @@ dosbox-src\bin\x64\Release\dosbox-x.exe -break-start drive_c\STEP.COM
 
 ## 文件
 
+- **[AI Agent 使用說明](AGENT_GUIDE.zh-TW.md)**——所需環境、安裝步驟、
+  agent 可呼叫的每一個 MCP 工具、錯誤代碼，以及範例工作流程。若您要把
+  agent 接上本專案，請從這裡開始。
 - [Phase 5C 傳輸層設計](docs/phase5c-real-mcp-transport-design.md)
 - [Phase 5C 最終報告](docs/phase5c-final-report.md)
 - [Phase 5C 實作狀態檢查點](docs/phase5c-implemented-state-checkpoint.md)
