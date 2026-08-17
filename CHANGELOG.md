@@ -12,6 +12,48 @@ English and Traditional Chinese together.
 
 ---
 
+## Bridge fix — Windows double-bind on 127.0.0.1:9876 (2026-08-17)
+
+**English**
+
+- Fixed `DEBUG_AI_Init()` (`dosbox-src/src/debug/debug_ai.cpp`)
+  unconditionally setting `SO_REUSEADDR` before `bind()`. On Windows
+  (unlike POSIX) that lets a second DOSBox-X-AI instance successfully
+  bind and listen on the same `127.0.0.1:9876` a first, still-running
+  instance already owns, with no defined rule for which instance an
+  agent's connection actually reaches -- silently contradicting the
+  bridge's documented "failed bind disables the bridge safely"
+  contract. Now guarded to POSIX only (`#if !defined(WIN32)`), mirroring
+  a documented precedent already in this project's own vendored SDL_net
+  (`vs/sdlnet/SDLnetTCP.c`, `vs/sdl2net/SDLnetTCP.c`) for the identical
+  pitfall.
+- Verified live with two concurrent `dosbox-x.exe` instances: the
+  second's `bind()` now fails and logs `bind() to 127.0.0.1:9876
+  failed, bridge disabled`, while the first instance's bridge keeps
+  responding normally.
+- Prompted by a user question about whether running more than one
+  Debugger GUI at once could conflict on the bridge port.
+
+**繁體中文**
+
+- 修正 `DEBUG_AI_Init()`（`dosbox-src/src/debug/debug_ai.cpp`）在
+  `bind()` 前無條件設定 `SO_REUSEADDR` 的問題。在 Windows 上（不同於
+  POSIX）這會讓第二個 DOSBox-X-AI 實例成功綁定並監聽同一個第一個實例
+  （仍在執行中）已經佔用的 `127.0.0.1:9876`，且沒有明確規則決定 agent
+  的連線實際上會連到哪一個實例——這悄悄違反了 bridge 文件宣稱的
+  「bind 失敗時會安全停用 bridge」的保證。現在已改成只在 POSIX 上設定
+  （`#if !defined(WIN32)`），沿用本專案自己內附的 SDL_net
+  （`vs/sdlnet/SDLnetTCP.c`、`vs/sdl2net/SDLnetTCP.c`）針對同一個
+  Windows 陷阱早已記載並採用的作法，而非另創新解法。
+- 已用兩個同時執行的 `dosbox-x.exe` 實例做過實機驗證：第二個實例的
+  `bind()` 現在會失敗，並記錄
+  `bind() to 127.0.0.1:9876 failed, bridge disabled`，第一個實例的
+  bridge 則持續正常回應。
+- 起因是使用者提出「同時開啟一個以上 Debugger GUI 是否會在 bridge
+  port 上衝突」的疑問。
+
+---
+
 ## Phase 7A — Guest frame capture (2026-08-16)
 
 **English**
