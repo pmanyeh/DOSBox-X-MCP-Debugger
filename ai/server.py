@@ -49,7 +49,7 @@ def get_project_status() -> dict:
 
     return {
         "project": "DOSBox-X AI Debugger",
-        "phase": "P7C",
+        "phase": "P7D",
         "dosbox_bridge": f"native ({dosbox.host}:{dosbox.port})",
         "debugger": "native",
         "mcp": "online",
@@ -472,6 +472,71 @@ def get_input_receipt(input_sequence: int) -> dict:
     """
 
     return _guarded_native(dosbox.get_input_receipt, input_sequence)
+
+
+@mcp.tool()
+def configure_execution_trace(
+    enabled: bool,
+    before_instructions: int = 0,
+    after_instructions: int = 0,
+    registers: list = None,
+    include_disassembly: bool = True,
+    max_trace_bytes: int = 65536,
+) -> dict:
+    """
+    Turn automatic execution tracing on/off for the real, running
+    DOSBox-X instance. While enabled, every time the debugger genuinely
+    stops (a code/memory breakpoint, a manual pause_execution(), or
+    -break-start) a trace is captured automatically -- the
+    `before_instructions` leading up to (and including) the stop, and,
+    if `after_instructions` > 0, that many instructions executed
+    immediately afterward (the debugger's own visible stop position
+    moves to reflect this). Meaningful whether the debugger is stopped
+    or running.
+
+    `before_instructions`/`after_instructions` are each 0..4096.
+    `registers` restricts which of ax/bx/cx/dx/si/di/bp/sp/cs/ip/flags
+    each instruction reports (omit for all). `max_trace_bytes`
+    (65536..4194304) bounds one trace's size -- see
+    list_execution_traces()/get_execution_trace()'s
+    dropped_instruction_count if exceeded.
+
+    Turning this off (the default) leaves breakpoint behavior/
+    performance completely unchanged from before this feature existed.
+    Fails with INTERNAL_ERROR on a build without heavy-debug support.
+    """
+
+    return _guarded_native(
+        dosbox.configure_execution_trace,
+        enabled, before_instructions, after_instructions, registers, include_disassembly, max_trace_bytes,
+    )
+
+
+@mcp.tool()
+def list_execution_traces(limit: int = 100, after_trace_id: int = None) -> dict:
+    """
+    List captured execution traces from the real, running DOSBox-X
+    instance (summaries only -- call get_execution_trace() for the full
+    before/after instruction detail). `after_trace_id` restricts to
+    traces newer than a given id. Meaningful whether the debugger is
+    stopped or running. The bridge retains at most the 100 most recent
+    traces.
+    """
+
+    return _guarded_native(dosbox.list_execution_traces, limit, after_trace_id)
+
+
+@mcp.tool()
+def get_execution_trace(trace_id: int) -> dict:
+    """
+    Fetch one execution trace's full detail (from
+    list_execution_traces()) from the real, running DOSBox-X instance --
+    the instructions before and after a breakpoint hit, with
+    disassembly and registers. Fails with TRACE_NOT_FOUND if that
+    trace_id isn't currently retained.
+    """
+
+    return _guarded_native(dosbox.get_execution_trace, trace_id)
 
 
 if __name__ == "__main__":

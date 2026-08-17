@@ -12,6 +12,95 @@ English and Traditional Chinese together.
 
 ---
 
+## Phase 7D — Bounded execution trace around a breakpoint hit (2026-08-17)
+
+**English**
+
+- Added `trace.execution.configure`/`.list`/`.get`. While enabled,
+  every time the debugger genuinely stops (a code/memory breakpoint, a
+  manual `pause_execution()`/Ctrl+Pause, or `-break-start`), a trace is
+  captured automatically -- the instructions leading up to (and
+  including) the stop, and, if `after_instructions>0`, that many
+  instructions executed immediately afterward (the debugger's own
+  visible stop position moves to reflect this).
+- Reuses three existing mechanisms rather than inventing new ones:
+  "before" comes from DOSBox-X's own existing heavy-debug instruction
+  log (the same ring buffer its "LOG HEAVY" debugger-console command
+  already writes into); "after" comes from the existing,
+  already-verified `DEBUG_AI_DoStepInto()` (Phase 4D), called
+  repeatedly from the exact context it already requires; trigger
+  detection is a minimal, additive change to
+  `CBreakpoint::CheckBreakpoint()`'s two existing `return true;` sites
+  (records which breakpoint matched -- a resolved snapshot, never a raw
+  pointer, since a "once" breakpoint is deleted in the very same call
+  that matches it).
+- The stop-transition hook wraps `DEBUG_AI_SetDebuggerActive()` itself
+  (detecting the false->true transition) rather than touching
+  `DEBUG_Enable_Handler()`/`DEBUG_Loop()` -- covers every entry point
+  uniformly, since all of them already funnel through that one setter.
+- Wired into `DOSBoxClient`/`ai/server.py` (bringing the tool count to
+  34) and `AGENT_GUIDE.md`/`.zh-TW.md`. New error code
+  `TRACE_NOT_FOUND`.
+- Verified live end-to-end (raw protocol and the actual MCP tool
+  functions) against a purpose-built test program: a real-mode memory
+  watchpoint correctly triggered `trigger.kind="memory_breakpoint"`;
+  `before` ended exactly at the trigger instruction; `after_instructions=4`
+  produced exactly 4 entries, and a separate, independent
+  `get_debug_status` call afterward confirmed the debugger's actual
+  stop position matched the last `after` entry exactly -- direct proof
+  the highest-risk part (calling `DEBUG_AI_DoStepInto()` from this new
+  context) works correctly with no corruption or crash. Also verified
+  a `manual_pause` trigger and `TRACE_NOT_FOUND`. Not independently
+  exercised: `max_trace_bytes` truncation and a code-breakpoint trigger
+  specifically (only memory breakpoints were exercised, though both
+  share the same code path) -- tracked as follow-up.
+- See `docs/phase7d-execution-trace-design.md` for the full design,
+  source investigation, and verification notes.
+
+This completes Epics A-D of the Phase 7 requirements draft's core
+observability work; Epic E (DOS I/O event log) remains.
+
+**繁體中文**
+
+- 新增 `trace.execution.configure`／`.list`／`.get`。啟用期間，每次
+  除錯器真正停止——不論是程式碼／記憶體中斷點、手動呼叫
+  `pause_execution()`／Ctrl+Pause，還是 `-break-start`——都會自動擷取
+  一筆 trace：包含停止前（含當下）的指令，以及，若
+  `after_instructions>0`，停止後立刻執行的那幾個指令（除錯器本身可見
+  的停止位置也會跟著移動以反映這點）。
+- 重用了三個既有機制，而不是自創新的：「before」來自 DOSBox-X 自己既有
+  的 heavy-debug 指令記錄（跟它「LOG HEAVY」除錯器主控台指令寫入的是
+  同一個環狀緩衝區）；「after」來自既有、早就驗證過的
+  `DEBUG_AI_DoStepInto()`（Phase 4D），從它本來就要求的那個情境重複
+  呼叫；觸發偵測則是對 `CBreakpoint::CheckBreakpoint()` 兩個既有的
+  `return true;` 位置做最小幅度的附加修改（記下是哪個中斷點命中——一份
+  已解析的快照，絕不是原始指標，因為「一次性」中斷點會在命中的同一次
+  呼叫裡就被刪除）。
+- 停止轉換的掛鉤點包在 `DEBUG_AI_SetDebuggerActive()` 本身（偵測
+  false→true 的轉換），而不是動 `DEBUG_Enable_Handler()`／
+  `DEBUG_Loop()`——這樣可以統一涵蓋所有進入點，因為它們本來就全部會經過
+  這同一個 setter。
+- 已接上 `DOSBoxClient`／`ai/server.py`（工具數來到 34 個）與
+  `AGENT_GUIDE.md`／`.zh-TW.md`。新增錯誤代碼 `TRACE_NOT_FOUND`。
+- 已完整實機端對端驗證（原始協定與實際 MCP 工具函式）：針對一個特別
+  寫的測試程式，real-mode 記憶體監看點正確觸發
+  `trigger.kind="memory_breakpoint"`；`before` 精準結束在觸發指令上；
+  `after_instructions=4` 剛好產生 4 筆記錄，事後另外獨立呼叫一次
+  `get_debug_status`，確認除錯器實際的停止位置跟最後一筆 `after`
+  完全吻合——直接證明了風險最高的部分（在這個新情境下呼叫
+  `DEBUG_AI_DoStepInto()`）運作正確，沒有任何損壞或當機。也驗證了
+  `manual_pause` 觸發與 `TRACE_NOT_FOUND`。這次沒有獨立驗證：
+  `max_trace_bytes` 截斷，以及專門針對程式碼中斷點的觸發（這次只驗證了
+  記憶體中斷點，但兩者走的是完全相同的程式路徑）——已記錄為後續追查
+  項目。
+- 完整設計、原始碼調查與驗證細節見
+  `docs/phase7d-execution-trace-design.md`。
+
+這次完成了 Phase 7 需求草案核心可觀測性工作的 Epic A-D；Epic
+E（DOS I/O 事件記錄）還沒做。
+
+---
+
 ## Bridge fix — debugger console crash on piped/redirected stdio (2026-08-17)
 
 **English**

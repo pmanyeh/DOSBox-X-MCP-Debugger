@@ -177,6 +177,15 @@ class DOSBoxInputReceiptExpired(DOSBoxClientError):
     code = "INPUT_RECEIPT_EXPIRED"
 
 
+class DOSBoxTraceNotFound(DOSBoxClientError):
+    """get_execution_trace() was called with a trace_id that is not
+    currently retained (see native error code TRACE_NOT_FOUND, Phase
+    7D). The bridge keeps at most the 100 most recent traces, evicting
+    the oldest -- does not distinguish "evicted" from "never issued"."""
+
+    code = "TRACE_NOT_FOUND"
+
+
 _NATIVE_ERROR_MAP = {
     "DEBUGGER_NOT_STOPPED": DOSBoxDebuggerNotStopped,
     "MEMORY_ERROR": DOSBoxMemoryError,
@@ -191,6 +200,7 @@ _NATIVE_ERROR_MAP = {
     "CAPTURE_UNAVAILABLE": DOSBoxCaptureUnavailable,
     "ABSOLUTE_MOUSE_UNAVAILABLE": DOSBoxAbsoluteMouseUnavailable,
     "INPUT_RECEIPT_EXPIRED": DOSBoxInputReceiptExpired,
+    "TRACE_NOT_FOUND": DOSBoxTraceNotFound,
 }
 
 
@@ -665,3 +675,102 @@ class DOSBoxClient:
         observation is reserved schema, not yet implemented."""
 
         return self.request("input.receipt.get", {"input_sequence": input_sequence})
+
+    # -- bounded execution trace around a breakpoint hit (Phase 7D) --
+
+    def configure_execution_trace(
+        self,
+        enabled: bool,
+        before_instructions: int = 0,
+        after_instructions: int = 0,
+        registers: Optional[list] = None,
+        include_disassembly: bool = True,
+        max_trace_bytes: int = 65536,
+    ) -> dict:
+        """Turn automatic execution tracing on/off. While enabled, every
+        time the debugger genuinely stops (a code/memory breakpoint, a
+        manual pause_execution()/Ctrl+Pause, or -break-start) a trace is
+        captured automatically -- covering the `before_instructions`
+        instructions leading up to (and including) the stop, and, if
+        `after_instructions` > 0, that many instructions executed
+        immediately afterward (the debugger's own visible stop position
+        moves to reflect this -- it will be `after_instructions`
+        instructions past the original trigger, not at the trigger
+        itself). Meaningful whether the debugger is stopped or running.
+
+        `before_instructions`/`after_instructions` are each 0..4096.
+        `registers` restricts which of "ax","bx","cx","dx","si","di",
+        "bp","sp","cs","ip","flags" each captured instruction reports;
+        omit for all of them. `max_trace_bytes` (65536..4194304) bounds
+        one trace's total size -- if exceeded, the oldest `before`
+        instructions are dropped first (see the result's
+        `dropped_instruction_count`), never truncating `after` ahead of
+        `before`.
+
+        Turning this OFF (the default) leaves breakpoint stop semantics
+        and performance completely unchanged from before this feature
+        existed -- this reuses DOSBox-X's own existing heavy-debug
+        instruction log (the same state its "LOG HEAVY" debugger-console
+        command uses) rather than a separate bridge-only mechanism, so a
+        human using that console command at the same time shares the
+        same state. Fails with INTERNAL_ERROR on a build without
+        C_HEAVY_DEBUG (this project's own default build already has it
+        on).
+
+        Result: {"enabled": bool, "configuration": {...}} (echoes back
+        the resolved configuration)."""
+
+        params = {
+            "enabled": enabled,
+            "before_instructions": before_instructions,
+            "after_instructions": after_instructions,
+            "include_disassembly": include_disassembly,
+            "max_trace_bytes": max_trace_bytes,
+        }
+        if registers is not None:
+            params["registers"] = registers
+        return self.request("trace.execution.configure", params)
+
+    def list_execution_traces(self, limit: int = 100, after_trace_id: Optional[int] = None) -> dict:
+        """List captured traces (newest-eligible-first up to `limit`,
+        1..100), each summarized (not the full before/after instruction
+        arrays -- call get_execution_trace() for those). `after_trace_id`
+        restricts to traces newer than a given id, for incremental
+        polling. Meaningful whether the debugger is stopped or running.
+
+        Result: {"traces": [{"trace_id", "trigger", "before_count",
+        "after_count", "complete_after"}, ...], "dropped_traces": int}
+        -- the bridge retains at most the 100 most recent traces,
+        evicting the oldest; `dropped_traces` counts how many have been
+        evicted in total."""
+
+        params = {"limit": limit}
+        if after_trace_id is not None:
+            params["after_trace_id"] = after_trace_id
+        return self.request("trace.execution.list", params)
+
+    def get_execution_trace(self, trace_id: int) -> dict:
+        """Fetch one trace's full detail by id (from
+        list_execution_traces() or a trace captured while you were
+        watching). Raises DOSBoxTraceNotFound (native TRACE_NOT_FOUND) if
+        that id isn't currently retained -- indistinguishable from one
+        that was never issued.
+
+        Result: {"trace_id", "trigger": {"kind":
+        "code_breakpoint"|"memory_breakpoint"|"manual_pause",
+        "breakpoint_id", "location", "emulated_ms"}, "before": [...],
+        "after": [...], "complete_after": bool,
+        "dropped_instruction_count": int}. Each before/after entry is
+        {"ordinal", "location", "bytes_hex", "disassembly",
+        "registers"}. `before`'s last entry is the trigger instruction
+        itself for a code_breakpoint/memory_breakpoint trigger (DOSBox-X's
+        heavy-debug log records an instruction immediately before
+        checking whether it's a breakpoint) -- for a manual_pause
+        trigger, the pause interrupts between the heavy-debug log's own
+        per-instruction checks, so `before`'s last entry is one
+        instruction short of the trigger location instead. `after`'s
+        entries are the instructions that ran after the trigger, in
+        execution order; `complete_after=false` if stepping through them
+        was cut short by hitting another breakpoint."""
+
+        return self.request("trace.execution.get", {"trace_id": trace_id})

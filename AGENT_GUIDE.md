@@ -150,7 +150,7 @@ Example MCP server config (adjust paths to your clone location):
 }
 ```
 
-`ai/server.py` is the unbounded, general-purpose tool surface (31 tools,
+`ai/server.py` is the unbounded, general-purpose tool surface (34 tools,
 listed below) and is the one intended for normal agent use. Two other MCP
 entry points exist for specific, narrower purposes and are **not** what
 most agents should connect to:
@@ -173,7 +173,7 @@ rather than a `DOSBOX_NOT_CONNECTED` error.
 
 ## Available tools
 
-31 tools, grouped by what they do. "Precondition" is the debugger state a
+34 tools, grouped by what they do. "Precondition" is the debugger state a
 call requires; calling it in the wrong state returns a specific error
 (see [Error codes](#error-codes)) rather than blocking or silently doing
 nothing.
@@ -384,6 +384,53 @@ should be read as claiming already works. To verify a dispatch actually
 affected the guest, pair this with `capture_frame` or a memory
 watchpoint instead.
 
+### Execution trace around a breakpoint hit
+
+| Tool | Parameters | Returns | Precondition |
+|---|---|---|---|
+| `configure_execution_trace` | `enabled: bool`, `before_instructions: 0..4096` (default `0`), `after_instructions: 0..4096` (default `0`), `registers: list[str]` (optional, default all of `ax/bx/cx/dx/si/di/bp/sp/cs/ip/flags`), `include_disassembly: bool` (default `true`), `max_trace_bytes: 65536..4194304` (default `65536`) | `{"enabled", "configuration": {...}}` | meaningful whether stopped or running; fails `INTERNAL_ERROR` without heavy-debug support |
+| `list_execution_traces` | `limit: 1..100` (default `100`), `after_trace_id: int` (optional) | `{"traces": [{"trace_id", "trigger", "before_count", "after_count", "complete_after"}, ...], "dropped_traces"}` | meaningful whether stopped or running |
+| `get_execution_trace` | `trace_id: int` | `{"trace_id", "trigger": {"kind", "breakpoint_id", "location", "emulated_ms"}, "before": [InstructionRecord, ...], "after": [InstructionRecord, ...], "complete_after", "dropped_instruction_count"}` | meaningful whether stopped or running; fails `TRACE_NOT_FOUND` if not currently retained |
+
+While `configure_execution_trace(enabled=true)` is active, every time
+the debugger genuinely stops -- a code/memory breakpoint, a manual
+`pause_execution()`/Ctrl+Pause, or `-break-start` -- a trace is captured
+automatically, with no separate "start tracing" call needed per stop.
+Each `InstructionRecord` is `{"ordinal", "location": "CS:IP",
+"bytes_hex", "disassembly", "registers": {...}}`. `trigger.kind` is
+`"code_breakpoint"`, `"memory_breakpoint"`, or `"manual_pause"`;
+`trigger.breakpoint_id` is the breakpoint's id AT THE TIME OF CAPTURE
+(a snapshot -- it stays readable even if you later call
+`delete_breakpoint` on that id).
+
+**If `after_instructions > 0`, the debugger's own visible stop position
+moves**: after capturing the trace, the bridge automatically executes
+`after_instructions` more instructions before handing control back --
+`get_debug_status`/`get_cpu_state` right after will show the CPU
+`after_instructions` instructions past the original trigger, not at the
+trigger itself (the trace's own `before`/`after` arrays show you both
+positions). `complete_after` is `false` if another breakpoint fired
+during that stepping (the partial `after` collected so far is still
+valid).
+
+**`before`'s last entry is the trigger instruction itself for a
+`code_breakpoint`/`memory_breakpoint` trigger** (DOSBox-X's underlying
+instruction log records an instruction immediately before checking
+whether it's a breakpoint) **-- but is one instruction short of the
+trigger for a `manual_pause`** (a manual pause interrupts between that
+log's own per-instruction checks, so the paused-at instruction was
+never logged). This is inherent to the underlying mechanism, not a bug
+to work around.
+
+**Known limitations**: reuses DOSBox-X's own existing heavy-debug
+instruction log (the same state its "LOG HEAVY" debugger-console
+command uses), so a human using that console command at the same time
+shares the same state. `before` can return fewer than
+`before_instructions` entries if trace was only just enabled (it never
+serves stale entries from before you turned it on). Real-mode x86,
+single CPU, unconditional breakpoints only -- no branch trace or
+source-level symbols.
+
 ## Error codes
 
 Every failure comes back as a structured `{"code", "message"}` error
@@ -408,6 +455,7 @@ specifically branch on:
 | `CAPTURE_UNAVAILABLE` | `set_mouse_capture` called but the current video backend has no controllable capture state | Not currently produced by any known build in this fork |
 | `ABSOLUTE_MOUSE_UNAVAILABLE` | `move_mouse_absolute`/`click_at` called but absolute positioning isn't usable in the guest's current mode | Check `get_mouse_capture`'s `"mode"` field first |
 | `INPUT_RECEIPT_EXPIRED` | `get_input_receipt`'s `input_sequence` isn't currently retained | Not retryable for that sequence -- it's evicted, or was never issued |
+| `TRACE_NOT_FOUND` | `get_execution_trace`'s `trace_id` isn't currently retained | Not retryable for that id -- it's evicted, or was never issued |
 | `DOSBOX_NOT_CONNECTED` | Client-side: bridge unreachable (DOSBox-X not running, or not built with `C_DEBUG`) | Start/relaunch DOSBox-X |
 | `DOSBOX_TIMEOUT` | Client-side: bridge didn't answer in time | Usually transient; may indicate DOSBox-X is stuck |
 

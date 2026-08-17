@@ -139,7 +139,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 }
 ```
 
-`ai/server.py` 是不受限、通用的工具介面（共 31 個工具，詳見下方），也是
+`ai/server.py` 是不受限、通用的工具介面（共 34 個工具，詳見下方），也是
 一般 agent 使用時應該連線的對象。另外還有兩個 MCP 進入點，用途較為特定、
 較窄，**多數 agent 不應該**連線到它們：
 
@@ -160,7 +160,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 
 ## 可用工具
 
-共 31 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
+共 34 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
 狀態下呼叫，會得到明確的錯誤（見〈[錯誤代碼](#錯誤代碼)〉），而不是卡住或
 悄悄地什麼都不做。
 
@@ -349,6 +349,46 @@ render 狀態），所以可以直接把 `capture_frame` 截圖裡挑到的像�
 成這件事已經做到了。要驗證某次 dispatch 真的影響了客體，請改用
 `capture_frame` 或記憶體監看點搭配確認。
 
+### 中斷點命中前後的執行 trace
+
+| 工具 | 參數 | 回傳 | 前置條件 |
+|---|---|---|---|
+| `configure_execution_trace` | `enabled: bool`、`before_instructions: 0..4096`（預設 `0`）、`after_instructions: 0..4096`（預設 `0`）、`registers: list[str]`（選填，預設全部 `ax/bx/cx/dx/si/di/bp/sp/cs/ip/flags`）、`include_disassembly: bool`（預設 `true`）、`max_trace_bytes: 65536..4194304`（預設 `65536`） | `{"enabled", "configuration": {...}}` | 停止或執行中皆可呼叫；沒有 heavy-debug 支援時回傳 `INTERNAL_ERROR` |
+| `list_execution_traces` | `limit: 1..100`（預設 `100`）、`after_trace_id: int`（選填） | `{"traces": [{"trace_id", "trigger", "before_count", "after_count", "complete_after"}, ...], "dropped_traces"}` | 停止或執行中皆可呼叫 |
+| `get_execution_trace` | `trace_id: int` | `{"trace_id", "trigger": {"kind", "breakpoint_id", "location", "emulated_ms"}, "before": [InstructionRecord, ...], "after": [InstructionRecord, ...], "complete_after", "dropped_instruction_count"}` | 停止或執行中皆可呼叫；若該 trace 目前沒保留，回傳 `TRACE_NOT_FOUND` |
+
+當 `configure_execution_trace(enabled=true)` 生效時，每次除錯器真正
+停止——不論是程式碼／記憶體中斷點、手動呼叫 `pause_execution()`／
+Ctrl+Pause，還是 `-break-start`——都會自動擷取一筆 trace，不需要每次
+停止前另外呼叫「開始追蹤」。每個 `InstructionRecord` 都是
+`{"ordinal", "location": "CS:IP", "bytes_hex", "disassembly",
+"registers": {...}}`。`trigger.kind` 是 `"code_breakpoint"`、
+`"memory_breakpoint"` 或 `"manual_pause"`；`trigger.breakpoint_id` 是
+**擷取當下**的中斷點 id（一個快照——即使之後對這個 id 呼叫
+`delete_breakpoint`，這裡仍然讀得到）。
+
+**若 `after_instructions > 0`，除錯器本身可見的停止位置會跟著移動**：
+擷取完 trace 之後，橋接層會自動再執行 `after_instructions` 個指令才
+把控制權交還——這之後呼叫 `get_debug_status`／`get_cpu_state`，會看到
+CPU 停在原本觸發點之後 `after_instructions` 個指令的地方，而不是觸發點
+本身（trace 自己的 `before`／`after` 陣列會同時顯示兩個位置）。如果在
+這段自動執行期間又命中了另一個中斷點，`complete_after` 會是
+`false`（目前為止收集到的部分 `after` 仍然有效）。
+
+**對 `code_breakpoint`／`memory_breakpoint` 觸發而言，`before` 的最後
+一筆就是觸發指令本身**（DOSBox-X 底層的指令記錄機制，會在檢查是否為
+中斷點之前就先記下這個指令）**——但對 `manual_pause` 而言，`before`
+會比觸發位置少一筆**（手動暫停是在底層記錄機制自己的逐指令檢查「之間」
+插入的，所以暫停當下那個指令從未被記錄過）。這是底層機制本來就有的
+特性，不是需要規避的 bug。
+
+**已知限制**：重用的是 DOSBox-X 自己既有的 heavy-debug 指令記錄（跟它
+「LOG HEAVY」除錯器主控台指令用的是同一份狀態），所以若有人同時在主控台
+用那個指令，會共用同一份狀態。如果 trace 剛啟用不久，`before` 可能回傳
+少於 `before_instructions` 筆（絕不會回傳啟用之前的舊資料）。初版僅支援
+real-mode x86、單一 CPU、無條件中斷點——不支援分支追蹤或原始碼層級的
+symbol。
+
 ## 錯誤代碼
 
 每一次失敗都會以結構化的 `{"code", "message"}` 錯誤回傳（絕不是原始例外
@@ -372,6 +412,7 @@ render 狀態），所以可以直接把 `capture_frame` 截圖裡挑到的像�
 | `CAPTURE_UNAVAILABLE` | 呼叫 `set_mouse_capture` 時，目前的畫面輸出後端沒有可控制的捕獲狀態 | 目前本 fork 已知的建置都不會產生這個錯誤 |
 | `ABSOLUTE_MOUSE_UNAVAILABLE` | 呼叫 `move_mouse_absolute`／`click_at` 時，絕對座標定位在客體目前的模式下無法使用 | 先檢查 `get_mouse_capture` 的 `"mode"` 欄位 |
 | `INPUT_RECEIPT_EXPIRED` | `get_input_receipt` 的 `input_sequence` 目前沒有被保留 | 該序號無法重試——已被淘汰，或根本沒發過 |
+| `TRACE_NOT_FOUND` | `get_execution_trace` 的 `trace_id` 目前沒有被保留 | 該 id 無法重試——已被淘汰，或根本沒發過 |
 | `DOSBOX_NOT_CONNECTED` | 用戶端層級：橋接層無法連線（DOSBox-X 未執行，或建置時未啟用 `C_DEBUG`） | 啟動或重新啟動 DOSBox-X |
 | `DOSBOX_TIMEOUT` | 用戶端層級：橋接層未在時限內回應 | 通常是暫時性的；也可能代表 DOSBox-X 卡住了 |
 
