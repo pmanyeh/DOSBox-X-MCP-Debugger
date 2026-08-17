@@ -49,7 +49,7 @@ def get_project_status() -> dict:
 
     return {
         "project": "DOSBox-X AI Debugger",
-        "phase": "P7D",
+        "phase": "P7E",
         "dosbox_bridge": f"native ({dosbox.host}:{dosbox.port})",
         "debugger": "native",
         "mcp": "online",
@@ -537,6 +537,60 @@ def get_execution_trace(trace_id: int) -> dict:
     """
 
     return _guarded_native(dosbox.get_execution_trace, trace_id)
+
+
+@mcp.tool()
+def configure_dos_io_log(
+    enabled: bool,
+    operations: list = None,
+    path_globs: list = None,
+    include_failed: bool = True,
+    max_events: int = 10000,
+) -> dict:
+    """
+    Turn DOS file I/O event logging on/off for the real, running
+    DOSBox-X instance. While enabled, every completed INT 21h
+    open/close/read/write/seek call is recorded with its real result
+    (actual bytes transferred, AX, carry). Meaningful whether the
+    debugger is stopped or running.
+
+    `operations` restricts which of "open"/"close"/"read"/"write"/"seek"
+    are logged (omit for all five). `path_globs` (e.g. ["*.GFF",
+    "SAVE-*"], case-insensitive) restricts to matching DOS paths --
+    non-matching events are never recorded at all. `max_events`
+    (100..100000) bounds the ring buffer.
+    """
+
+    return _guarded_native(
+        dosbox.configure_dos_io_log, enabled, operations, path_globs, include_failed, max_events
+    )
+
+
+@mcp.tool()
+def list_dos_io_events(
+    limit: int = 1000, after_event_id: int = None, operation: str = None, path_glob: str = None
+) -> dict:
+    """
+    List recorded DOS file I/O events from the real, running DOSBox-X
+    instance. `after_event_id` restricts to events newer than a given
+    id; `operation`/`path_glob` filter further. `buffer.linear` in each
+    event lets you correlate a read with a later memory watchpoint on
+    that same address. Meaningful whether the debugger is stopped or
+    running.
+    """
+
+    return _guarded_native(dosbox.list_dos_io_events, limit, after_event_id, operation, path_glob)
+
+
+@mcp.tool()
+def clear_dos_io_log() -> dict:
+    """
+    Discard every currently recorded DOS file I/O event on the real,
+    running DOSBox-X instance (does not change the current
+    configure_dos_io_log() configuration or stop logging).
+    """
+
+    return _guarded_native(dosbox.clear_dos_io_log)
 
 
 if __name__ == "__main__":

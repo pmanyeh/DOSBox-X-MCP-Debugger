@@ -139,7 +139,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 }
 ```
 
-`ai/server.py` 是不受限、通用的工具介面（共 34 個工具，詳見下方），也是
+`ai/server.py` 是不受限、通用的工具介面（共 37 個工具，詳見下方），也是
 一般 agent 使用時應該連線的對象。另外還有兩個 MCP 進入點，用途較為特定、
 較窄，**多數 agent 不應該**連線到它們：
 
@@ -160,7 +160,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 
 ## 可用工具
 
-共 34 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
+共 37 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
 狀態下呼叫，會得到明確的錯誤（見〈[錯誤代碼](#錯誤代碼)〉），而不是卡住或
 悄悄地什麼都不做。
 
@@ -388,6 +388,41 @@ CPU 停在原本觸發點之後 `after_instructions` 個指令的地方，而不
 少於 `before_instructions` 筆（絕不會回傳啟用之前的舊資料）。初版僅支援
 real-mode x86、單一 CPU、無條件中斷點——不支援分支追蹤或原始碼層級的
 symbol。
+
+### DOS 檔案 I/O 事件記錄
+
+| 工具 | 參數 | 回傳 | 前置條件 |
+|---|---|---|---|
+| `configure_dos_io_log` | `enabled: bool`、`operations: list[str]`（選填，預設全部 `open/close/read/write/seek`）、`path_globs: list[str]`（選填，預設所有路徑）、`include_failed: bool`（預設 `true`）、`max_events: 100..100000`（預設 `10000`） | `{"enabled", "max_events"}` | 停止或執行中皆可呼叫 |
+| `list_dos_io_events` | `limit: 1..1000`（預設 `1000`）、`after_event_id: int`（選填）、`operation: str`（選填）、`path_glob: str`（選填） | `{"events": [DosIoEvent, ...], "dropped_events"}` | 停止或執行中皆可呼叫 |
+| `clear_dos_io_log` | 無 | `{"cleared": true}` | 停止或執行中皆可呼叫 |
+
+啟用期間，每一次完成的 real-mode `INT 21h`
+`open`(3Dh)／`close`(3Eh)／`read`(3Fh)／`write`(40h)／`seek`(42h) 呼叫都
+會被記錄下來，附上真實的呼叫後結果——實際傳輸的位元組數、`AX`、carry、
+DOS 錯誤碼——絕不只是請求本身。每筆 `DosIoEvent`：
+`{"event_id", "emulated_ms", "operation", "phase": "completed", "cs_ip",
+"process": {"psp_segment"}, "handle", "path_dos", "path_host",
+"file_offset_before", "requested_bytes", "transferred_bytes",
+"buffer": {"segment", "offset", "linear"},
+"result": {"carry", "ax", "dos_error"}}`。
+
+`path_host` 只有在真正掛載到主機目錄的磁碟（一般 `MOUNT C <路徑>`
+這種）才會有值——image 掛載／ISO／網路磁碟一律是 `null`，絕不用猜的。
+`buffer.linear` 可以讓你把一次 `read` 跟之後設在同一個位址的記憶體監看點
+對照起來——完整範例見 `docs/case-study-dark-sun-gpli-debugging.md`。
+`path_globs`（`*`／`?` 萬用字元，不分大小寫）的篩選發生在事件被記錄
+**之前**——不符合的事件根本不會佔用環狀緩衝區，不只是在 `list` 裡被
+藏起來而已。
+
+**已知限制**：只涵蓋上面這五個服務——不支援 FCB 檔案存取、`EXEC`，或
+DOS extender／protected-mode 檔案 I/O。很多 DOS shell 內建指令（例如
+`TYPE`）內部用的是比較舊的 FCB 式檔案存取路徑，而不是這裡記錄的現代
+handle 式呼叫，所以就算啟用了記錄，這些指令也不會出現在記錄裡——這是
+預期行為，不是 bug；如果要確認記錄功能正常運作，請用一個會自己呼叫
+現代 handle API（`AH=3Dh` 等）的程式來測試。寫入的內容本身永遠不會被
+擷取，只有中繼資料——如果需要實際的位元組內容，請自行用 `buffer.linear`
+搭配 `read_memory` 讀取。
 
 ## 錯誤代碼
 

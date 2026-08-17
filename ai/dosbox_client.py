@@ -774,3 +774,86 @@ class DOSBoxClient:
         was cut short by hitting another breakpoint."""
 
         return self.request("trace.execution.get", {"trace_id": trace_id})
+
+    # -- DOS file I/O event log (Phase 7E) --
+
+    def configure_dos_io_log(
+        self,
+        enabled: bool,
+        operations: Optional[list] = None,
+        path_globs: Optional[list] = None,
+        include_failed: bool = True,
+        max_events: int = 10000,
+    ) -> dict:
+        """Turn DOS file I/O event logging on/off. While enabled, every
+        completed `INT 21h` `open`(3Dh)/`close`(3Eh)/`read`(3Fh)/
+        `write`(40h)/`seek`(42h) call is recorded with its real result
+        (actual bytes transferred, AX, carry) -- never merely the
+        request. Meaningful whether the debugger is stopped or running.
+
+        `operations` restricts which of "open"/"close"/"read"/"write"/
+        "seek" are logged (omit for all five). `path_globs` (e.g.
+        `["*.GFF", "SAVE-*"]`, case-insensitive, `*`/`?` wildcards)
+        restricts to matching DOS paths -- events for non-matching paths
+        are never recorded, not merely hidden. `include_failed` (default
+        True) also logs failed calls (e.g. opening a nonexistent file).
+        `max_events` (100..100000, default 10000) bounds the ring
+        buffer -- oldest events are evicted first once full (see
+        list_dos_io_events()'s `dropped_events`).
+
+        Result: {"enabled": bool, "max_events": int}."""
+
+        params = {
+            "enabled": enabled,
+            "include_failed": include_failed,
+            "max_events": max_events,
+        }
+        if operations is not None:
+            params["operations"] = operations
+        if path_globs is not None:
+            params["path_globs"] = path_globs
+        return self.request("dos.io.configure", params)
+
+    def list_dos_io_events(
+        self,
+        limit: int = 1000,
+        after_event_id: Optional[int] = None,
+        operation: Optional[str] = None,
+        path_glob: Optional[str] = None,
+    ) -> dict:
+        """List recorded DOS file I/O events (oldest-eligible-first up
+        to `limit`, 1..1000). `after_event_id` restricts to events newer
+        than a given id, for incremental polling; `operation`/
+        `path_glob` filter the already-recorded events further (on top
+        of whatever configure_dos_io_log() itself was already
+        restricted to). Meaningful whether the debugger is stopped or
+        running.
+
+        Result: {"events": [DosIoEvent, ...], "dropped_events": int}.
+        Each event: {"event_id", "emulated_ms", "operation",
+        "phase": "completed", "cs_ip", "process": {"psp_segment"},
+        "handle", "path_dos", "path_host", "file_offset_before",
+        "requested_bytes", "transferred_bytes", "buffer": {"segment",
+        "offset", "linear"}, "result": {"carry", "ax", "dos_error"}}.
+        `path_host` is only populated for a real mounted host directory
+        (a plain `MOUNT C C:\\some\\folder`-style drive) -- null for
+        image-mounted/ISO/network drives. `buffer.linear` lets you
+        correlate a read with a later memory watchpoint on that same
+        address (see docs/case-study-dark-sun-gpli-debugging.md for a
+        worked example of exactly this)."""
+
+        params = {"limit": limit}
+        if after_event_id is not None:
+            params["after_event_id"] = after_event_id
+        if operation is not None:
+            params["operation"] = operation
+        if path_glob is not None:
+            params["path_glob"] = path_glob
+        return self.request("dos.io.list", params)
+
+    def clear_dos_io_log(self) -> dict:
+        """Discard every currently recorded DOS file I/O event (does not
+        change the current configure_dos_io_log() configuration, and
+        does not stop logging). Result: {"cleared": true}."""
+
+        return self.request("dos.io.clear")

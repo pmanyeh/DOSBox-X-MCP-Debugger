@@ -1,6 +1,12 @@
 # Phase 7：客體畫面觀測、可靠輸入與 DOS I/O 追蹤需求
 
-> 狀態：實作需求草案  
+> 狀態：Epic A-E 均已實作並完成實機驗證，詳見
+> `docs/phase7a-frame-capture-design.md`、
+> `docs/phase7b-mouse-capture-and-absolute-input-design.md`、
+> `docs/phase7c-input-dispatch-receipts-design.md`、
+> `docs/phase7d-execution-trace-design.md`、
+> `docs/phase7e-dos-io-event-log-design.md` 各自的「Implementation
+> status」章節，以及 `CHANGELOG.md`。本文件保留作為原始需求規格。  
 > 對象：DOSBox-X-AI 原生 bridge、Python client 與 MCP tool surface 的實作者  
 > 前置：`docs/phase6b-input-injection-design.md`
 

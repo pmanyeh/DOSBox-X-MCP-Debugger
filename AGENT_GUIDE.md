@@ -150,7 +150,7 @@ Example MCP server config (adjust paths to your clone location):
 }
 ```
 
-`ai/server.py` is the unbounded, general-purpose tool surface (34 tools,
+`ai/server.py` is the unbounded, general-purpose tool surface (37 tools,
 listed below) and is the one intended for normal agent use. Two other MCP
 entry points exist for specific, narrower purposes and are **not** what
 most agents should connect to:
@@ -173,7 +173,7 @@ rather than a `DOSBOX_NOT_CONNECTED` error.
 
 ## Available tools
 
-34 tools, grouped by what they do. "Precondition" is the debugger state a
+37 tools, grouped by what they do. "Precondition" is the debugger state a
 call requires; calling it in the wrong state returns a specific error
 (see [Error codes](#error-codes)) rather than blocking or silently doing
 nothing.
@@ -430,6 +430,43 @@ shares the same state. `before` can return fewer than
 serves stale entries from before you turned it on). Real-mode x86,
 single CPU, unconditional breakpoints only -- no branch trace or
 source-level symbols.
+
+### DOS file I/O event log
+
+| Tool | Parameters | Returns | Precondition |
+|---|---|---|---|
+| `configure_dos_io_log` | `enabled: bool`, `operations: list[str]` (optional, default all of `open/close/read/write/seek`), `path_globs: list[str]` (optional, default all paths), `include_failed: bool` (default `true`), `max_events: 100..100000` (default `10000`) | `{"enabled", "max_events"}` | meaningful whether stopped or running |
+| `list_dos_io_events` | `limit: 1..1000` (default `1000`), `after_event_id: int` (optional), `operation: str` (optional), `path_glob: str` (optional) | `{"events": [DosIoEvent, ...], "dropped_events"}` | meaningful whether stopped or running |
+| `clear_dos_io_log` | none | `{"cleared": true}` | meaningful whether stopped or running |
+
+While enabled, every completed real-mode `INT 21h`
+`open`(3Dh)/`close`(3Eh)/`read`(3Fh)/`write`(40h)/`seek`(42h) call is
+recorded with its REAL post-call result -- actual bytes transferred,
+`AX`, carry, DOS error code -- never merely the request. Each
+`DosIoEvent`: `{"event_id", "emulated_ms", "operation",
+"phase": "completed", "cs_ip", "process": {"psp_segment"}, "handle",
+"path_dos", "path_host", "file_offset_before", "requested_bytes",
+"transferred_bytes", "buffer": {"segment", "offset", "linear"},
+"result": {"carry", "ax", "dos_error"}}`.
+
+`path_host` is only populated for a real mounted host directory (a
+plain `MOUNT C <path>`-style drive) -- `null` for image-mounted/ISO/
+network drives, never a guess. `buffer.linear` lets you correlate a
+`read` with a later memory watchpoint on that same address -- see
+`docs/case-study-dark-sun-gpli-debugging.md` for a worked example of
+exactly this. `path_globs` (`*`/`?` wildcards, case-insensitive)
+filtering happens BEFORE an event is recorded -- a non-matching event
+never occupies the ring buffer, not merely hidden from `list`.
+
+**Known limitations**: only the five services above -- no FCB-style
+file access, `EXEC`, or DOS extender/protected-mode file I/O. Many DOS
+shell built-ins (e.g. `TYPE`) use an older FCB-based file access path
+internally rather than the modern handle-based calls this logs, so
+they will not appear here even while enabled -- this is expected, not
+a bug; test with a program that itself calls the modern handle API
+(`AH=3Dh` etc.) if you need to confirm the log is working. Write
+content is never captured, only metadata -- read `buffer.linear` via
+`read_memory` yourself if you need the actual bytes.
 
 ## Error codes
 

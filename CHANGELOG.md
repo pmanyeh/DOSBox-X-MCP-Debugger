@@ -12,6 +12,105 @@ English and Traditional Chinese together.
 
 ---
 
+## Phase 7E — DOS file I/O high-level event log (2026-08-18)
+
+**English**
+
+- Added `configure_dos_io_log`/`list_dos_io_events`/`clear_dos_io_log`.
+  While enabled, every completed real-mode `INT 21h`
+  `open`(3Dh)/`close`(3Eh)/`read`(3Fh)/`write`(40h)/`seek`(42h) call is
+  recorded with its real post-call result -- actual bytes transferred,
+  `AX`, carry, DOS error code -- never merely the request. Five
+  one-line hooks inside the existing `DOS_21Handler()` (`src/dos/dos.cpp`),
+  each at the point that service has already computed its real result.
+- `path_host` resolves via `localDrive::GetHostName()` -- DOSBox-X's own
+  existing DOS-path-to-host-path conversion -- and is only ever
+  populated for a real mounted host directory, `null` for image-mounted/
+  ISO/network drives. `buffer.linear` (the real-mode `DS:DX` transfer
+  buffer's linear address) lets an agent correlate a `read` with a
+  later memory watchpoint on that same address -- composes directly
+  with the existing Dark Sun case study workflow.
+- Unlike every other dual-route (stopped vs. running) method elsewhere
+  in this bridge, all three `dos.io.*` methods -- including
+  `.configure` -- are answered directly under one plain mutex: DOS file
+  I/O is comparatively rare (nowhere near Phase 7D's per-instruction
+  rate), so no lock-free per-instruction design is needed here.
+- **A real result-fabrication bug was found and fixed during live
+  verification, not merely theorized**: the first working version read
+  the carry flag from the live `reg_flags` global, which silently
+  reported `carry: false` for every event -- including a
+  guaranteed-failing open. Root cause: `CALLBACK_SCF()`
+  (`src/cpu/callback.cpp`) patches the FLAGS word already saved on the
+  stack for the pending IRET-equivalent return, never the live
+  `reg_flags` -- fixed by reading that same stacked location. Caught
+  only because verification specifically exercised a call known to
+  fail, not just the success path -- see the design doc for the full
+  root-cause writeup.
+- Wired into `DOSBoxClient`/`ai/server.py` (bringing the tool count to
+  37) and `AGENT_GUIDE.md`/`.zh-TW.md`, including a documented known
+  limitation: many DOS shell built-ins (e.g. `TYPE`) use an older
+  FCB-based file access path that this log does not see at all, by
+  design (out of this phase's declared scope) -- confirmed live (zero
+  events from `TYPE` against a real file) rather than assumed.
+- Verified live end-to-end (raw protocol and the actual MCP tool
+  functions) against a purpose-built real-mode test program: Open ->
+  Lseek -> Read (16 bytes) -> Close produced four correct events in
+  order (path, handle, offsets, byte counts, buffer, AX all verified
+  self-consistent); a guaranteed failed open correctly reported
+  `carry: true`, `dos_error: 2` (File Not Found); `path_globs:
+  ["*.GFF"]` against unrelated `*.DAT` I/O produced zero events, not
+  merely hidden ones.
+- See `docs/phase7e-dos-io-event-log-design.md` for the full design,
+  source investigation, and verification notes.
+
+This completes all five epics (A-E) of the Phase 7 requirements draft.
+
+**繁體中文**
+
+- 新增 `configure_dos_io_log`／`list_dos_io_events`／`clear_dos_io_log`。
+  啟用期間，每一次完成的 real-mode `INT 21h`
+  `open`(3Dh)／`close`(3Eh)／`read`(3Fh)／`write`(40h)／`seek`(42h)
+  呼叫都會被記錄下來，附上真實的呼叫後結果——實際傳輸的位元組數、
+  `AX`、carry、DOS 錯誤碼——絕不只是請求本身。在既有的 `DOS_21Handler()`
+  （`src/dos/dos.cpp`）裡加了五個各一行的掛鉤點，各自插在該服務已經
+  算出真實結果的那個時間點。
+- `path_host` 是透過 `localDrive::GetHostName()`——DOSBox-X 自己既有的
+  DOS 路徑轉主機路徑機制——來解析的，只有真正掛載到主機目錄的磁碟才會
+  有值，image 掛載／ISO／網路磁碟一律是 `null`。`buffer.linear`（呼叫者
+  傳入的 real-mode `DS:DX` 傳輸緩衝區的線性位址）讓 agent 可以把一次
+  `read` 跟之後設在同一個位址的記憶體監看點對照——可以直接跟既有的
+  Dark Sun 案例研究工作流程組合使用。
+- 跟這個橋接層裡其他所有雙路由（停止／執行中）方法不同，所有三個
+  `dos.io.*` 方法——包括 `.configure`——都是在同一個普通 mutex 下直接
+  回答的：DOS 檔案 I/O 相對少見（完全不到 Phase 7D 那種逐指令頻率的
+  等級），這裡不需要無鎖的逐指令設計。
+- **這次實機驗證過程中真的找到並修正了一個「結果造假」的 bug，不只是
+  理論上的擔心**：第一版能動的實作是從即時的 `reg_flags` 全域變數讀取
+  carry 旗標，結果每一筆事件都悄悄回報 `carry: false`——包括一次保證
+  會失敗的 open。根本原因：`CALLBACK_SCF()`（`src/cpu/callback.cpp`）
+  修改的是已經存在堆疊上、等著被pending 的 IRET 等效返回讀走的那份
+  FLAGS 字組，而不是即時的 `reg_flags`——修法是改讀同一個堆疊位置。
+  這個 bug 只有在驗證時特意測了一次「保證失敗」的呼叫才被抓到，不是只
+  測成功路徑——完整根本原因分析見設計文件。
+- 已接上 `DOSBoxClient`／`ai/server.py`（工具數來到 37 個）與
+  `AGENT_GUIDE.md`／`.zh-TW.md`，並記錄了一個已知限制：很多 DOS shell
+  內建指令（例如 `TYPE`）內部用的是比較舊的 FCB 式檔案存取路徑，這個
+  記錄機制完全看不到——這是本 phase 宣告範圍之外，設計上本來就如此
+  ——已實機確認（對一個真實存在的檔案跑 `TYPE`，產生零筆事件），不是
+  憑假設。
+- 已完整實機端對端驗證（原始協定與實際 MCP 工具函式）：針對一個特別
+  寫的 real-mode 測試程式，Open → Lseek → Read（16 bytes）→ Close
+  依序產生四筆正確事件（路徑、handle、offset、位元組數、buffer、AX
+  互相對照都一致）；一次保證失敗的 open 正確回報 `carry: true`、
+  `dos_error: 2`（File Not Found）；`path_globs: ["*.GFF"]` 對不相關的
+  `*.DAT` I/O 產生零筆事件，不只是被藏起來。
+- 完整設計、原始碼調查與驗證細節見
+  `docs/phase7e-dos-io-event-log-design.md`。
+
+這次完成了 Phase 7 需求草案的全部五個 Epic（A-E）。
+
+---
+
 ## Phase 7D — Bounded execution trace around a breakpoint hit (2026-08-17)
 
 **English**
