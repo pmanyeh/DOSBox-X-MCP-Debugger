@@ -126,7 +126,7 @@ Example MCP server config (adjust paths to your clone location):
 }
 ```
 
-`ai/server.py` is the unbounded, general-purpose tool surface (30 tools,
+`ai/server.py` is the unbounded, general-purpose tool surface (31 tools,
 listed below) and is the one intended for normal agent use. Two other MCP
 entry points exist for specific, narrower purposes and are **not** what
 most agents should connect to:
@@ -149,7 +149,7 @@ rather than a `DOSBOX_NOT_CONNECTED` error.
 
 ## Available tools
 
-30 tools, grouped by what they do. "Precondition" is the debugger state a
+31 tools, grouped by what they do. "Precondition" is the debugger state a
 call requires; calling it in the wrong state returns a specific error
 (see [Error codes](#error-codes)) rather than blocking or silently doing
 nothing.
@@ -208,6 +208,15 @@ enables that, see [Installation](#installation).
 | `step_over` | none | debug status snapshot after the instruction (a CALL/INT/LOOP/REP runs to completion first) | debugger stopped; fails `ALREADY_RUNNING`; fails `EXECUTION_TIMEOUT` if the stepped-over call doesn't return in time (check `get_debug_status` afterward -- it may have completed since) |
 
 ### Keyboard input
+
+Every tool in this section and the next (Mouse input) -- but not
+`release_all_input` or the Mouse capture & absolute positioning tools
+below -- also returns `"queued": true, "dispatched": true,
+"dispatched_at_emulated_ms": int, "input_sequence": int,
+"guest_observed": "not_supported"` alongside its own result field.
+`input_sequence` is one shared, monotonically increasing space across
+all of them; pass it to `get_input_receipt` later to look the dispatch
+back up (see "Input dispatch receipts" below).
 
 | Tool | Parameters | Returns | Precondition |
 |---|---|---|---|
@@ -327,6 +336,30 @@ successfully dispatched position -- never a claim about what the guest
 program actually read (see `guest_observed`-style caveats throughout
 this guide).
 
+### Input dispatch receipts
+
+| Tool | Parameters | Returns | Precondition |
+|---|---|---|---|
+| `get_input_receipt` | `input_sequence: int` | `{"queued", "dispatched", "dispatched_at_emulated_ms", "input_sequence", "guest_observed": "not_supported", "device": "keyboard"\|"mouse", "guest_observation": {"kind": null, "observed_at_emulated_ms": null}}` | meaningful whether stopped or running; fails `INPUT_RECEIPT_EXPIRED` if the sequence isn't currently retained |
+
+Looks up an earlier keyboard/mouse dispatch by the `input_sequence`
+that call already returned -- useful when you want to confirm, after
+the fact, that a specific keypress or click genuinely reached
+`KEYBOARD_AddKey()`/`Mouse_CursorMoved()`/`Mouse_ButtonPressed()`/
+`Mouse_ButtonReleased()`, not merely that the RPC call returned
+successfully. The bridge retains at least the most recent 4096
+dispatches or 10 minutes' worth, whichever bound is hit first --
+`INPUT_RECEIPT_EXPIRED` does not distinguish an evicted sequence from
+one that was never issued.
+
+`"guest_observed"` and `"guest_observation"` are always
+`"not_supported"`/`null` in this implementation -- confirming that DOS/
+BIOS input state actually changed (not just that the bridge dispatched
+it) is reserved schema for a future phase, not something this guide
+should be read as claiming already works. To verify a dispatch actually
+affected the guest, pair this with `capture_frame` or a memory
+watchpoint instead.
+
 ## Error codes
 
 Every failure comes back as a structured `{"code", "message"}` error
@@ -350,6 +383,7 @@ specifically branch on:
 | `FRAME_TOO_LARGE` | `capture_frame`'s encoded frame exceeds the bridge's payload cap | Retry with the `suggested_max_width`/`suggested_max_height` in the error message |
 | `CAPTURE_UNAVAILABLE` | `set_mouse_capture` called but the current video backend has no controllable capture state | Not currently produced by any known build in this fork |
 | `ABSOLUTE_MOUSE_UNAVAILABLE` | `move_mouse_absolute`/`click_at` called but absolute positioning isn't usable in the guest's current mode | Check `get_mouse_capture`'s `"mode"` field first |
+| `INPUT_RECEIPT_EXPIRED` | `get_input_receipt`'s `input_sequence` isn't currently retained | Not retryable for that sequence -- it's evicted, or was never issued |
 | `DOSBOX_NOT_CONNECTED` | Client-side: bridge unreachable (DOSBox-X not running, or not built with `C_DEBUG`) | Start/relaunch DOSBox-X |
 | `DOSBOX_TIMEOUT` | Client-side: bridge didn't answer in time | Usually transient; may indicate DOSBox-X is stuck |
 

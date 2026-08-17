@@ -12,6 +12,75 @@ English and Traditional Chinese together.
 
 ---
 
+## Phase 7C — Input dispatch receipts (2026-08-17)
+
+**English**
+
+- Every `input.key.*`/`input.mouse.*` dispatch (down/up/tap, relative
+  move, button set/click, and Phase 7B's `move_absolute`/`click_at`)
+  now returns `"queued": true, "dispatched": true,
+  "dispatched_at_emulated_ms", "input_sequence", "guest_observed":
+  "not_supported"` alongside its own result field -- one shared,
+  monotonically increasing `input_sequence` space across all of them.
+  `input.mouse.capture.get`/`.set` (Phase 7B) and `input.release_all`
+  deliberately do NOT gain these fields -- neither dispatches guest
+  input, so a "dispatch receipt" would misrepresent what happened; see
+  the design doc's "What gets a receipt" section.
+- New `input.receipt.get` looks up an earlier dispatch by
+  `input_sequence`, whether the debugger is stopped or running,
+  answered directly from the socket thread (a receipt is already-computed
+  history, not live emulator state, so no request queue is involved).
+  Backed by a mutex-guarded ring buffer retaining at least the most
+  recent 4096 receipts or 10 minutes' worth, whichever bound an entry
+  hits first; a stale/unknown sequence returns `INPUT_RECEIPT_EXPIRED`.
+- `guest_observed`/`guest_observation` are always
+  `"not_supported"`/`null` in this implementation -- real DOS/BIOS-side
+  observation is reserved schema (per the requirements draft's explicit
+  allowance), not implemented.
+- Wired into `DOSBoxClient.get_input_receipt()`/`ai/server.py`'s
+  `get_input_receipt` tool (bringing the tool count to 31),
+  `AGENT_GUIDE.md`/`.zh-TW.md`. New error code `INPUT_RECEIPT_EXPIRED`.
+- Verified live end-to-end: `key_tap`/`click_at`/`move_mouse_relative`
+  each dispatched, and their receipts looked back up correctly by
+  device and sequence; an unissued sequence correctly rejected; the
+  scoping decision (capture.get/.set and release_all_input excluded)
+  confirmed in the actual running responses, not just documented.
+- See `docs/phase7c-input-dispatch-receipts-design.md` for the full
+  design and verification notes.
+
+**繁體中文**
+
+- 每一次 `input.key.*`／`input.mouse.*` 的 dispatch（down／up／tap、
+  相對移動、按鈕 set／click，以及 Phase 7B 的
+  `move_absolute`／`click_at`）現在都會在自己原本的回傳欄位之外，附上
+  `"queued": true, "dispatched": true, "dispatched_at_emulated_ms",
+  "input_sequence", "guest_observed": "not_supported"`——這些工具共用
+  同一個單一遞增的 `input_sequence` 序號空間。`input.mouse.capture.get`／
+  `.set`（Phase 7B）與 `input.release_all` 刻意不會拿到這些欄位——兩者
+  都沒有真的送出客體輸入，若附上「dispatch receipt」會誤導實際發生的
+  事——詳見設計文件的「哪些呼叫會拿到 receipt」一節。
+- 新增 `input.receipt.get`，可用 `input_sequence` 回頭查一次先前的
+  dispatch，不論除錯器是停止還是執行中都能查，且直接在 socket thread
+  上回答（receipt 是已經發生、算好的歷史紀錄，不是即時的 emulator
+  狀態，不需要經過任何請求佇列）。背後是一個以 mutex 保護的環狀緩衝區，
+  至少保留最近 4096 筆或最近 10 分鐘的 receipt，以先達到的門檻為準；
+  過期或未知的序號會回傳 `INPUT_RECEIPT_EXPIRED`。
+- 本實作中 `"guest_observed"`／`"guest_observation"` 永遠是
+  `"not_supported"`／`null`——真正的 DOS／BIOS 端觀測是保留欄位（需求
+  草案本來就明確允許 v1 只做到這裡），目前尚未實作。
+- 已接上 `DOSBoxClient.get_input_receipt()`／`ai/server.py` 的
+  `get_input_receipt` 工具（工具數來到 31 個）、
+  `AGENT_GUIDE.md`／`.zh-TW.md`。新增錯誤代碼 `INPUT_RECEIPT_EXPIRED`。
+- 已完整實機端對端驗證：`key_tap`／`click_at`／`move_mouse_relative`
+  各自送出後，都能用序號正確查回對應的 device 與 receipt；未發過的
+  序號正確被拒絕；範圍界定（`capture.get`／`.set` 與
+  `release_all_input` 排除在外）在實際執行中的回應裡也確認成立，
+  不只是寫在文件裡。
+- 完整設計與驗證細節見
+  `docs/phase7c-input-dispatch-receipts-design.md`。
+
+---
+
 ## Phase 7B — Mouse capture status & absolute positioning (2026-08-17)
 
 **English**

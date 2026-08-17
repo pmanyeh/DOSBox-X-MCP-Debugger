@@ -166,6 +166,17 @@ class DOSBoxAbsoluteMouseUnavailable(DOSBoxClientError):
     code = "ABSOLUTE_MOUSE_UNAVAILABLE"
 
 
+class DOSBoxInputReceiptExpired(DOSBoxClientError):
+    """get_input_receipt() was called with an input_sequence that is not
+    currently in the bridge's receipt ring buffer (see native error code
+    INPUT_RECEIPT_EXPIRED, Phase 7C). The bridge keeps at least the most
+    recent 4096 receipts or 10 minutes' worth, whichever bound is hit
+    first, and does not distinguish "evicted" from "never issued" --
+    both report this same error."""
+
+    code = "INPUT_RECEIPT_EXPIRED"
+
+
 _NATIVE_ERROR_MAP = {
     "DEBUGGER_NOT_STOPPED": DOSBoxDebuggerNotStopped,
     "MEMORY_ERROR": DOSBoxMemoryError,
@@ -179,6 +190,7 @@ _NATIVE_ERROR_MAP = {
     "FRAME_TOO_LARGE": DOSBoxFrameTooLarge,
     "CAPTURE_UNAVAILABLE": DOSBoxCaptureUnavailable,
     "ABSOLUTE_MOUSE_UNAVAILABLE": DOSBoxAbsoluteMouseUnavailable,
+    "INPUT_RECEIPT_EXPIRED": DOSBoxInputReceiptExpired,
 }
 
 
@@ -439,6 +451,17 @@ class DOSBoxClient:
     # US 104-key layout (see ParseKeyName() in debug_ai.cpp) -- e.g. "a",
     # "1", "f1", "enter", "leftshift", "kp5". Arbitrary text/scan codes are
     # not accepted in this v1.
+    #
+    # Every method below (key_down/up/tap, move_mouse_relative,
+    # set_mouse_button, click_mouse -- and move_mouse_absolute()/click_at()
+    # further down) also returns "queued": true, "dispatched": true,
+    # "dispatched_at_emulated_ms": int, "input_sequence": int, and
+    # "guest_observed": "not_supported" alongside its own result field
+    # (Phase 7C). "input_sequence" is a single shared, monotonically
+    # increasing space across ALL of these methods -- pass it to
+    # get_input_receipt() later to look the dispatch back up. release_all_input()
+    # does NOT get these fields: it releases an arbitrary number of keys/
+    # buttons at once, so no single input_sequence would describe it.
 
     def key_down(self, key: str) -> dict:
         """Press and hold `key`. The bridge tracks held keys per
@@ -591,9 +614,11 @@ class DOSBoxClient:
 
         Result: {"queued": true, "dispatched": true, "guest_x": number,
         "guest_y": number, "coordinate_space": "guest_pixels",
-        "clamped": bool, "input_sequence": int} -- guest_x/guest_y are
-        always reported in guest_pixels, even for a normalized-space
-        request."""
+        "clamped": bool, "input_sequence": int,
+        "dispatched_at_emulated_ms": int, "guest_observed":
+        "not_supported"} -- guest_x/guest_y are always reported in
+        guest_pixels, even for a normalized-space request. See
+        get_input_receipt()."""
 
         return self.request(
             "input.mouse.move_absolute",
@@ -619,3 +644,24 @@ class DOSBoxClient:
             "input.mouse.click_at",
             {"x": x, "y": y, "button": button, "coordinate_space": coordinate_space, "clamp": clamp},
         )
+
+    # -- input dispatch receipts (Phase 7C) --
+
+    def get_input_receipt(self, input_sequence: int) -> dict:
+        """Look up an earlier key/mouse dispatch by the "input_sequence"
+        one of the input.* methods above returned, whether the debugger
+        is currently stopped or running. Raises DOSBoxInputReceiptExpired
+        (native INPUT_RECEIPT_EXPIRED) if that sequence isn't in the
+        bridge's ring buffer (at least the most recent 4096 dispatches or
+        10 minutes' worth, whichever bound is hit first) -- indistinguishable
+        from an input_sequence that was never issued.
+
+        Result: {"queued": true, "dispatched": true,
+        "dispatched_at_emulated_ms": int, "input_sequence": int,
+        "guest_observed": "not_supported", "device": "keyboard"|"mouse",
+        "guest_observation": {"kind": None, "observed_at_emulated_ms":
+        None}}. "guest_observed"/"guest_observation" are always
+        "not_supported"/null in this implementation -- real DOS/BIOS-side
+        observation is reserved schema, not yet implemented."""
+
+        return self.request("input.receipt.get", {"input_sequence": input_sequence})

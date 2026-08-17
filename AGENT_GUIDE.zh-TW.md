@@ -121,7 +121,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 }
 ```
 
-`ai/server.py` 是不受限、通用的工具介面（共 30 個工具，詳見下方），也是
+`ai/server.py` 是不受限、通用的工具介面（共 31 個工具，詳見下方），也是
 一般 agent 使用時應該連線的對象。另外還有兩個 MCP 進入點，用途較為特定、
 較窄，**多數 agent 不應該**連線到它們：
 
@@ -142,7 +142,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 
 ## 可用工具
 
-共 30 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
+共 31 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
 狀態下呼叫，會得到明確的錯誤（見〈[錯誤代碼](#錯誤代碼)〉），而不是卡住或
 悄悄地什麼都不做。
 
@@ -199,6 +199,14 @@ fork 的預設建置設定已經啟用它，見〈[安裝步驟](#安裝步驟)�
 | `step_over` | 無 | 該指令執行完之後的除錯狀態快照（若是 CALL/INT/LOOP/REP，會先讓它完整跑完） | 除錯器已停止；否則回傳 `ALREADY_RUNNING`；若被跳過的呼叫未在時限內返回則回傳 `EXECUTION_TIMEOUT`（之後可用 `get_debug_status` 確認是否隨後已完成） |
 
 ### 鍵盤輸入
+
+本節與下一節（滑鼠輸入）裡的每個工具──但不包含 `release_all_input`
+以及下方「滑鼠捕獲狀態與絕對座標定位」的工具──都會在自己原本的回傳
+欄位之外，額外附上 `"queued": true, "dispatched": true,
+"dispatched_at_emulated_ms": int, "input_sequence": int,
+"guest_observed": "not_supported"`。`input_sequence` 是這些工具共用的
+單一遞增序號空間；之後可以拿它呼叫 `get_input_receipt` 回頭查這次
+dispatch（見下方「輸入 dispatch receipt」）。
 
 | 工具 | 參數 | 回傳 | 前置條件 |
 |---|---|---|---|
@@ -304,6 +312,25 @@ render 狀態），所以可以直接把 `capture_frame` 截圖裡挑到的像�
 是橋接層最後一次成功送達的座標——不是「客體程式真的讀到了」的保證（跟本
 指南其他地方 `guest_observed` 類的警語一致）。
 
+### 輸入 dispatch receipt
+
+| 工具 | 參數 | 回傳 | 前置條件 |
+|---|---|---|---|
+| `get_input_receipt` | `input_sequence: int` | `{"queued", "dispatched", "dispatched_at_emulated_ms", "input_sequence", "guest_observed": "not_supported", "device": "keyboard"\|"mouse", "guest_observation": {"kind": null, "observed_at_emulated_ms": null}}` | 停止或執行中皆可呼叫；若該序號目前沒保留，回傳 `INPUT_RECEIPT_EXPIRED` |
+
+用先前呼叫回傳的 `input_sequence`，回頭查一次鍵盤／滑鼠 dispatch——適合
+在事後確認某次按鍵或點擊真的送到了
+`KEYBOARD_AddKey()`／`Mouse_CursorMoved()`／`Mouse_ButtonPressed()`／
+`Mouse_ButtonReleased()`，而不只是「RPC 呼叫本身成功回傳」。橋接層至少
+會保留最近 4096 筆 dispatch 或最近 10 分鐘的資料，以先達到的門檻為準；
+`INPUT_RECEIPT_EXPIRED` 不會區分「已被淘汰」跟「根本沒發過這個序號」。
+
+本實作中 `"guest_observed"` 與 `"guest_observation"` 永遠是
+`"not_supported"`／`null`——確認 DOS／BIOS 端的輸入狀態真的改變了（而不
+只是橋接層送出去了），是留給未來 phase 的保留欄位，本指南不應該被理解
+成這件事已經做到了。要驗證某次 dispatch 真的影響了客體，請改用
+`capture_frame` 或記憶體監看點搭配確認。
+
 ## 錯誤代碼
 
 每一次失敗都會以結構化的 `{"code", "message"}` 錯誤回傳（絕不是原始例外
@@ -326,6 +353,7 @@ render 狀態），所以可以直接把 `capture_frame` 截圖裡挑到的像�
 | `FRAME_TOO_LARGE` | `capture_frame` 編碼後的畫面超過橋接層的大小上限 | 用錯誤訊息裡的 `suggested_max_width`／`suggested_max_height` 重試 |
 | `CAPTURE_UNAVAILABLE` | 呼叫 `set_mouse_capture` 時，目前的畫面輸出後端沒有可控制的捕獲狀態 | 目前本 fork 已知的建置都不會產生這個錯誤 |
 | `ABSOLUTE_MOUSE_UNAVAILABLE` | 呼叫 `move_mouse_absolute`／`click_at` 時，絕對座標定位在客體目前的模式下無法使用 | 先檢查 `get_mouse_capture` 的 `"mode"` 欄位 |
+| `INPUT_RECEIPT_EXPIRED` | `get_input_receipt` 的 `input_sequence` 目前沒有被保留 | 該序號無法重試——已被淘汰，或根本沒發過 |
 | `DOSBOX_NOT_CONNECTED` | 用戶端層級：橋接層無法連線（DOSBox-X 未執行，或建置時未啟用 `C_DEBUG`） | 啟動或重新啟動 DOSBox-X |
 | `DOSBOX_TIMEOUT` | 用戶端層級：橋接層未在時限內回應 | 通常是暫時性的；也可能代表 DOSBox-X 卡住了 |
 

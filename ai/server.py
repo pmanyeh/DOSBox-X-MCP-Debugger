@@ -49,7 +49,7 @@ def get_project_status() -> dict:
 
     return {
         "project": "DOSBox-X AI Debugger",
-        "phase": "P7B",
+        "phase": "P7C",
         "dosbox_bridge": f"native ({dosbox.host}:{dosbox.port})",
         "debugger": "native",
         "mcp": "online",
@@ -456,6 +456,22 @@ def click_at(
     """
 
     return _guarded_native(dosbox.click_at, x, y, button, coordinate_space, clamp)
+
+
+@mcp.tool()
+def get_input_receipt(input_sequence: int) -> dict:
+    """
+    Look up an earlier key/mouse dispatch on the real, running DOSBox-X
+    instance by the "input_sequence" one of the input tools above
+    returned (key_down/up/tap, move_mouse_relative, set_mouse_button,
+    click_mouse, move_mouse_absolute, click_at) -- whether the debugger
+    is currently stopped or running. Fails with INPUT_RECEIPT_EXPIRED if
+    that sequence is not in the bridge's ring buffer (at least the most
+    recent 4096 dispatches or 10 minutes' worth, whichever bound is hit
+    first) -- indistinguishable from a sequence that was never issued.
+    """
+
+    return _guarded_native(dosbox.get_input_receipt, input_sequence)
 
 
 if __name__ == "__main__":
