@@ -46,6 +46,13 @@ English and Traditional Chinese together.
   the identical launch with stdout/stderr redirected to a file, or
   piped through an automation tool's own output capture, crashes on the
   first genuine debugger stop either way.
+- With a genuine console, the stopped-route gaps Phase 7B/7C's design
+  docs had flagged as "not independently verified" were closed in this
+  same session: `capture.get`/`.set` while genuinely stopped now
+  confirmed to toggle/reflect correctly via the
+  `g_requestQueue`/`DEBUG_AI_Poll()` route, and `move_absolute`/
+  `click_at`/`key_tap`/`input.receipt.get` all behave exactly as
+  designed while stopped -- see the updated Phase 7B/7C design docs.
 
 **繁體中文**
 
@@ -74,6 +81,12 @@ English and Traditional Chinese together.
   用 `Start-Process`（繼承真正的 console）可以正常運作；完全相同的啟動
   方式只是把 stdout／stderr 重新導向到檔案，或被自動化工具自己的輸出
   攔截機制接管，兩種情況都會在除錯器第一次真正停止時當掉。
+- 有了真正的 console 之後，Phase 7B／7C 設計文件裡標記為「未獨立驗證」
+  的 stopped 路線缺口，在同一次 session 就補上了：`capture.get`／`.set`
+  在除錯器真正停止時，已確認能透過 `g_requestQueue`／`DEBUG_AI_Poll()`
+  這條路線正確切換與反映狀態；`move_absolute`／`click_at`／`key_tap`／
+  `input.receipt.get` 在停止狀態下也都完全照設計運作——詳見更新後的
+  Phase 7B／7C 設計文件。
 
 ---
 

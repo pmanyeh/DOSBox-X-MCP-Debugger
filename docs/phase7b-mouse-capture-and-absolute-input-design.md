@@ -276,7 +276,7 @@ Phase 6A/6B/7A):
    the SAME session's `video.frame.capture` result for the same video
    mode -- must match exactly, since both derive from `render.src`.
 
-## Implementation status: done, running-route verified live; stopped-route not independently exercised
+## Implementation status: done, verified live (both routes)
 
 Implemented as designed, in the four files listed above (plus
 `include/mouse.h`/`include/video.h` for the two new thin accessors).
@@ -308,28 +308,23 @@ driving a game or program):
 6. `input_sequence` increments monotonically across calls on one
    connection, as intended.
 
-**Not independently verified this session: the stopped route**
-(`capture.get`/`capture.set` while the debugger is genuinely stopped,
-and `move_absolute`/`click_at` correctly rejecting with
-`DEBUGGER_STOPPED` in that state). This is NOT because the stopped-route
-code is untested by construction -- it calls the exact same
-`BuildMouseCaptureStatusResult()`/`ApplyMouseCaptureSet()` helpers the
-verified running route uses, reached through the SAME
-`g_requestQueue`/`DEBUG_AI_Poll()` mechanism `debug.status`/`cpu.get`/
-every other stopped-only method already relies on. Rather, this
-session's automated launch environment could not reliably reach a
-genuinely stopped debugger at all: `-break-start` did not put the
-bridge into a state where even a long-established, previously-verified
-method (`cpu.get`) reported anything but `DEBUGGER_NOT_STOPPED`, and
-separately, calling `execution.pause` crashed `dosbox-x.exe` outright --
-reproduced on a completely fresh instance with no Phase 7B methods
-called first, so this is a pre-existing condition of this launch
-environment, not a regression introduced by this design's
-implementation. Likely candidate: the debugger's console UI
-(`pdcurses`) may not attach correctly when `dosbox-x.exe` is launched
-from a non-interactive/backgrounded shell with no real console, which
-is how this session launched it. Follow-up: reproduce and fix (or at
-minimum root-cause) `execution.pause`'s crash and `-break-start`'s
-apparent no-op under this launch pattern, then re-run this section's
-stopped-route checks specifically -- tracked as a known gap, not
-silently assumed to be fine.
+**Stopped route, verified in a follow-up session after root-causing why
+it couldn't be reached initially**: the original blocker was never a
+Phase 7B code defect -- it was `dosbox-x.exe`'s debugger console setup
+(`WIN32_Console()`/`ResizeConsole()`, `src/debug/debug_win32.cpp`)
+crashing whenever the process's own stdout was piped/redirected rather
+than inheriting a genuine console, which is exactly how this session's
+automated launches worked. See the "Bridge fix -- debugger console
+crash on piped/redirected stdio" `CHANGELOG.md` entry and
+`AGENT_GUIDE.md`'s launch section for the full root cause and fix.
+Once launched with a genuine inherited console (`pause_execution()` no
+longer crashes it), the stopped route was exercised directly:
+
+7. `capture.get`/`capture.set(true/false)` while genuinely stopped
+   (`execution.pause` then `debug.status` confirmed `stopped: true`)
+   toggled and reflected instantly, via the `g_requestQueue`/
+   `DEBUG_AI_Poll()` route -- matching the running route's behavior
+   exactly, as the shared-helper design predicted.
+8. `move_absolute`, `click_at`, and `key_tap` (Phase 6B) each correctly
+   rejected with `DEBUGGER_STOPPED` while stopped, with the exact same
+   error message existing input methods already use.

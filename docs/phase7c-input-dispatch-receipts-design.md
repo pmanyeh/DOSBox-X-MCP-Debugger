@@ -219,6 +219,21 @@ Verified live via the actual MCP tool functions against a running
    `input_sequence: 3` -- confirms the counter is one shared space
    across key/mouse ops in dispatch order, not per-method.
 
+In a follow-up session (after root-causing and fixing an unrelated
+debugger-console crash that had been blocking a genuinely stopped
+debugger state -- see `CHANGELOG.md`'s "Bridge fix -- debugger console
+crash on piped/redirected stdio" entry), also verified while
+genuinely stopped (`execution.pause` then `debug.status` confirmed
+`stopped: true`):
+
+6. `input.receipt.get` answered correctly while stopped (a query for an
+   unissued sequence still correctly returned `INPUT_RECEIPT_EXPIRED`),
+   confirming it needs no request queue in either debugger state, as
+   designed.
+7. `key_tap` (Phase 6B) correctly rejected with `DEBUGGER_STOPPED`
+   while stopped, alongside `move_absolute`/`click_at` (Phase 7B) --
+   no receipt was recorded for the rejected calls.
+
 Not yet done: an automated `pytest` suite (consistent with the same
 gap already tracked for Phases 6A/6B/7A/7B) and stress-testing the
 ring buffer's two eviction bounds (4096 entries / 10 minutes) under
