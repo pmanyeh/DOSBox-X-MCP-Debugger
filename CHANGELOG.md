@@ -12,6 +12,71 @@ English and Traditional Chinese together.
 
 ---
 
+## Bridge fix — debugger console crash on piped/redirected stdio (2026-08-17)
+
+**English**
+
+- Root-caused the `execution.pause`/`-break-start` reliability issue
+  flagged in the Phase 7C entry above: `ResizeConsole()`
+  (`src/debug/debug_win32.cpp`, called from `WIN32_Console()` the first
+  time the debugger console opens -- Ctrl+Pause, `-break-start`,
+  `execution.pause`, or the AI bridge's stopped-only methods all share
+  this path) called `GetConsoleScreenBufferInfo()` without checking its
+  return value, then used the resulting **entirely uninitialized**
+  `CONSOLE_SCREEN_BUFFER_INFO` regardless. That call fails whenever the
+  handle it's given isn't a genuine console screen buffer -- which
+  happens whenever `dosbox-x.exe`'s own stdout/stderr were
+  redirected/piped at process creation rather than inheriting a real
+  console (confirmed via Windows Error Reporting crash dumps from an
+  earlier session: exception `0xc0000409`,
+  `STATUS_STACK_BUFFER_OVERRUN`, consistent with operating on garbage
+  stack data). Fixed by bailing out early on failure -- verified this
+  does not regress the working (real-console) case.
+- This fix alone does not resolve every crash/silent-exit possible under
+  piped stdio in this environment -- a second, deeper issue also exists
+  in `DBGUI_StartUp()`'s own `AttachConsole()`/`AllocConsole()`/
+  `freopen()`/`initscr()` sequence (`src/debug/debug_gui.cpp`), inside
+  vendored PDCurses console initialization, not fixed this session.
+- Practical takeaway, documented in `AGENT_GUIDE.md`/`.zh-TW.md`: an
+  agent that launches `dosbox-x.exe` itself must give it a genuine
+  inherited console, not stdout/stderr piped/redirected at process
+  creation -- otherwise the debugger console (shared by every
+  stopped-only AI bridge method) can crash the whole process. Confirmed
+  live: a plain `Start-Process` (inheriting a real console) works;
+  the identical launch with stdout/stderr redirected to a file, or
+  piped through an automation tool's own output capture, crashes on the
+  first genuine debugger stop either way.
+
+**繁體中文**
+
+- 追查出上面 Phase 7C 條目提到的 `execution.pause`／`-break-start`
+  不穩定問題的根本原因：`ResizeConsole()`（`src/debug/debug_win32.cpp`，
+  由 `WIN32_Console()` 呼叫，發生在除錯器主控台第一次開啟時——不論是
+  Ctrl+Pause、`-break-start`、`execution.pause`，還是 AI 橋接層「僅限
+  停止時」的方法，全都共用這條路徑）呼叫 `GetConsoleScreenBufferInfo()`
+  時沒檢查回傳值，然後不管結果如何都直接使用那個**完全未初始化**的
+  `CONSOLE_SCREEN_BUFFER_INFO`。這個呼叫在拿到的 handle 不是真正的
+  console screen buffer 時就會失敗——而只要 `dosbox-x.exe` 自己的
+  stdout／stderr 在建立行程時就被重新導向／接管（而不是繼承一個真正的
+  console），就會發生這種情況（已透過上次 session 留下的 Windows Error
+  Reporting 當機傾印檔確認：例外代碼 `0xc0000409`
+  `STATUS_STACK_BUFFER_OVERRUN`，跟操作垃圾堆疊資料的現象吻合）。修法是
+  失敗時提早返回——已驗證不會影響「有真正 console」這個正常運作的情境。
+- 這個修正本身並不能解決這個環境下 piped stdio 可能造成的所有當機／
+  無聲結束情況——`DBGUI_StartUp()` 自己的
+  `AttachConsole()`／`AllocConsole()`／`freopen()`／`initscr()` 這串流程
+  （`src/debug/debug_gui.cpp`）裡，也就是內附的 PDCurses console
+  初始化程式碼中，還存在第二個更深層的問題，這次 session 沒有修。
+- 已記錄在 `AGENT_GUIDE.md`／`.zh-TW.md` 的實務結論：如果是 agent 自己
+  啟動 `dosbox-x.exe`，必須讓它繼承一個真正的 console，不能在建立行程時
+  就把 stdout／stderr 重新導向或接管——否則除錯器主控台（被所有「僅限
+  停止時」的 AI 橋接層方法共用）可能會讓整個行程當掉。已實機確認：單純
+  用 `Start-Process`（繼承真正的 console）可以正常運作；完全相同的啟動
+  方式只是把 stdout／stderr 重新導向到檔案，或被自動化工具自己的輸出
+  攔截機制接管，兩種情況都會在除錯器第一次真正停止時當掉。
+
+---
+
 ## Phase 7C — Input dispatch receipts (2026-08-17)
 
 **English**

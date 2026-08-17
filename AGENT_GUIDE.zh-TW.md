@@ -106,6 +106,24 @@ dosbox-src\bin\x64\Release\dosbox-x.exe -defaultdir -break-start drive_c\YOURPRO
   額外的步驟去「啟動」橋接層——它會隨著除錯器一起啟動
   （`DEBUG_AI_Init()`，由 `DEBUG_Init()` 呼叫）。
 
+**如果是 agent 自己啟動 `dosbox-x.exe`（而不是人類雙擊執行檔，或從一般
+終端機啟動），必須讓這個行程繼承一個真正的 Win32 console——不能在建立
+行程時就把 stdout／stderr 重新導向或接管到檔案。**互動式除錯器主控台
+（跟 AI 橋接層「僅限停止時」的方法共用同一條程式路徑——`pause_execution`、
+`cpu.get`、`read_memory` 等等，全都需要跟人類按 Ctrl+Pause 時完全相同的
+`DEBUG_Loop()`／主控台機制）會在除錯器第一次真正停止時，開啟自己的
+console 視窗。如果這個行程自己的 std handle 在啟動時就被重新導向／
+接管，這個主控台初始化過程可能會直接讓整個 `dosbox-x.exe` 行程當掉，
+連帶讓 AI 橋接層一起掛掉——已確認會在「輸出被某個工具攔截、重新導向的
+shell 呼叫」下發生，也確認在「行程直接繼承啟動者自己真正的 console」時
+不會發生。實務上：啟動 `dosbox-x.exe` 這個動作本身，請避免用
+`> file 2>&1` 這類重新導向，或自動化工具自己的輸出攔截包裝；若需要保留
+日誌，請改在 `dosbox-x.conf` 的 `[log]` 區段設定 `logfile`（直接從行程
+內部寫入真正的檔案，完全不會碰到 `STD_OUTPUT_HANDLE`），而不是在作業
+系統層級重新導向這個行程自己的 stdout。不需要除錯器處於停止狀態的方法
+（`capture_frame`、`get_mouse_capture`、執行中的鍵盤／滑鼠輸入等）則完全
+不受影響。
+
 ### 5. 讓您的 MCP host 指向 `ai/server.py`
 
 MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：

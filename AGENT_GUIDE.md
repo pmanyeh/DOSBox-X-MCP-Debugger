@@ -111,6 +111,30 @@ dosbox-src\bin\x64\Release\dosbox-x.exe -defaultdir -break-start drive_c\YOURPRO
   extra step is needed to "start" the bridge -- it comes up automatically
   with the debugger (`DEBUG_AI_Init()`, called from `DEBUG_Init()`).
 
+**If an agent launches `dosbox-x.exe` itself (rather than a human
+double-clicking it or starting it from a normal terminal), it must give
+the process a genuine, inherited Win32 console -- not stdout/stderr
+piped or redirected to a file at process creation.** The interactive
+debugger console (shared code path with the AI bridge's stopped-only
+methods -- `pause_execution`, `cpu.get`, `read_memory`, etc. all require
+the SAME `DEBUG_Loop()`/console machinery a human's Ctrl+Pause would
+trigger) opens its own console window the first time the debugger
+genuinely stops. If the process's own std handles were redirected/piped
+at launch, that console setup can crash the whole `dosbox-x.exe`
+process outright, taking the AI bridge down with it -- confirmed to
+happen from a captured/piped shell invocation (e.g. a tool that pipes
+subprocess output for logging), and confirmed NOT to happen when the
+process instead inherits its launcher's own real console. In practice:
+avoid `> file 2>&1`-style redirection or an automation tool's own
+output-capture wrapper around the `dosbox-x.exe` launch itself; if you
+need persisted logs, set `logfile` under `dosbox-x.conf`'s `[log]`
+section instead (writes from inside the process to a real file, never
+touching `STD_OUTPUT_HANDLE`) rather than redirecting the process's own
+stdout at the OS level. Methods
+that don't need the debugger to be stopped (`capture_frame`,
+`get_mouse_capture`, key/mouse input while running, etc.) are
+unaffected either way.
+
 ### 5. Point your MCP host at `ai/server.py`
 
 Example MCP server config (adjust paths to your clone location):
