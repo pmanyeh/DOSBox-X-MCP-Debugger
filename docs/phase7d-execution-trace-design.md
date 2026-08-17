@@ -352,10 +352,19 @@ path); and `complete_after=false` (stepping into a second breakpoint
 mid-`after`-sequence). Tracked as follow-up rather than assumed fine,
 consistent with this project's practice for prior phases' gaps.
 
-Also confirmed, incidentally, that `-break-start` remains unreliable
+Also confirmed, incidentally, that `-break-start` appeared unreliable
 in this environment even with the console-crash fix applied (landed
-correctly on some launches, not others) -- a known, separately-tracked
-issue (see the "Bridge fix -- debugger console crash on piped/redirected
-stdio" `CHANGELOG.md` entry); `execution.pause` was used as the
-reliable fallback throughout this verification, as it was for Phase
-7B/7C's.
+correctly on some launches, not others); `execution.pause` was used as
+the reliable fallback throughout this verification, as it was for
+Phase 7B/7C's. This was root-caused in a later session -- see the "Bridge fix --
+`-defaultdir` swallowing the next command-line switch" `CHANGELOG.md`
+entry -- and is not a `-break-start` bug at all: a bare `-defaultdir`
+(no path argument) immediately followed by another `-`-prefixed option
+greedily consumed that option as its own (bogus) directory argument.
+The launch pattern used throughout this verification
+(`-defaultdir -break-start ...`) hit this exactly, which is consistent
+with the flakiness observed -- 100% reproducible for a fixed command
+line, but easy to mistake for a race across sessions that varied
+whether `-defaultdir` was given an explicit path. `-break-start` itself
+was reliable all along; the fix makes the bare-`-defaultdir` form work
+correctly too.

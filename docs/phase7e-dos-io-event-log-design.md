@@ -260,8 +260,12 @@ Verified live against a purpose-built 85-byte real-mode test program
 (hand-assembled: open `TESTDATA.DAT`, seek to offset 8, read 16 bytes,
 close, then attempt to open a nonexistent `NOSUCH.XXX`), run from an
 actual DOS prompt (`MOUNT C <path>`, `C:`, then the program name) since
-`-break-start` remains unreliable in this environment (see the
-"Bridge fix" `CHANGELOG.md` entry) -- via raw protocol calls and the
+`-break-start` appeared unreliable in this environment at the time (see
+the "Bridge fix -- debugger console crash on piped/redirected stdio"
+`CHANGELOG.md` entry for the state of the investigation as of this
+Epic; later root-caused as a `-defaultdir` argument-parsing bug, not a
+`-break-start` bug -- see the "Bridge fix -- `-defaultdir` swallowing
+the next command-line switch" entry) -- via raw protocol calls and the
 actual MCP tool functions:
 
 1. Open -> seek -> read (16 bytes) -> close produced exactly four

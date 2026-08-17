@@ -12,6 +12,79 @@ English and Traditional Chinese together.
 
 ---
 
+## Bridge fix — `-defaultdir` swallowing the next command-line switch (2026-08-17)
+
+**English**
+
+- Root-caused the actual remaining source of `-break-start`
+  "unreliability" flagged as a known limitation in the Phase 7D and 7E
+  design docs (and left unresolved after the console-crash fix below):
+  `-defaultdir`'s option handler (`src/gui/sdlmain.cpp`,
+  `DOSBOX_parse_argv()`) takes an *optional* path argument, but called
+  `CommandLine::NextOptArgv()` unconditionally to try to get it.
+  `NextOptArgv()` has no concept of "optional" -- it hands back
+  whatever token comes next, even if that token is actually the
+  following `-switch`. A bare `-defaultdir` (no path of its own)
+  immediately followed by another option -- exactly the
+  `-defaultdir -break-start <program>` form used throughout this
+  project's own launch instructions and prior testing -- silently ate
+  `-break-start` as a bogus (nonexistent) directory name, so
+  `control->opt_break_start` was never set and the debugger never
+  stopped. This is 100% reproducible for a fixed command line, not a
+  race, which is why some sessions' test runs "worked" and others
+  didn't: it depended entirely on whether `-defaultdir` happened to be
+  given an explicit path in that particular invocation.
+- Confirmed live via temporary diagnostic counters exposed through
+  `debug.status`, which showed `DEBUG_EnableDebugger()` was never even
+  called, and a raw log of every option token `GetOpt()` yielded, which
+  showed `-defaultdir`'s handler consuming the literal string
+  `-break-start` as its own argument.
+- Fixed by peeking the next token (`CommandLine::GetCurrentArgv()`,
+  which does not consume it) before calling `NextOptArgv()`, and only
+  treating it as `-defaultdir`'s own argument if it doesn't itself look
+  like another option (doesn't start with `-` or `/`) -- otherwise
+  falling through to the existing "no argument given" path
+  (`usecfgdir = true`), exactly as if `-defaultdir` had been the last
+  token on the command line.
+- Verified live: `-defaultdir -break-start drive_c\SPIN.COM` (the bare
+  form, previously broken) and `-defaultdir <path> -break-start
+  drive_c\SPIN.COM` (explicit path) both now correctly stop the
+  debugger at the BIOS reset vector (`F000:FFF0`) before POST, as
+  designed. `-break-start` itself was never unreliable.
+
+**繁體中文**
+
+- 追查出 Phase 7D／7E 設計文件中列為已知限制、在上面「除錯器主控台
+  當機」修法之後仍未解決的 `-break-start`「不可靠」問題的真正根本原因：
+  `-defaultdir` 的選項處理常式（`src/gui/sdlmain.cpp` 的
+  `DOSBOX_parse_argv()`）本應接受一個**可省略**的路徑參數，卻無條件呼叫
+  `CommandLine::NextOptArgv()` 去取它。`NextOptArgv()` 沒有「可省略」的
+  概念——不管下一個 token 是不是其實是另一個 `-switch`，都會原封不動交
+  出來。當裸的 `-defaultdir`（自己沒帶路徑）緊接著另一個選項——正是本
+  專案自己的啟動說明和先前測試全程使用的
+  `-defaultdir -break-start <程式>` 這種寫法——就會把 `-break-start`
+  當成一個假的（根本不存在的）目錄名稱悄悄吃掉，導致
+  `control->opt_break_start` 永遠不會被設成 `true`，除錯器也就永遠不會
+  真的停下來。這是固定命令列下 100% 可重現的結果，不是競態條件——之所以
+  有些 session 測試「成功」、有些「失敗」，純粹取決於那次呼叫的
+  `-defaultdir` 有沒有剛好帶了明確路徑而已。
+- 已透過暫時透過 `debug.status` 曝露的診斷計數器即時確認：
+  `DEBUG_EnableDebugger()` 根本從未被呼叫過；另外也記錄了 `GetOpt()`
+  依序解析出的每一個選項 token，直接看到 `-defaultdir` 的處理常式把
+  `-break-start` 這個字串原封不動當成自己的參數吃掉。
+- 修法：在呼叫 `NextOptArgv()` 之前，先用不會消耗 token 的
+  `CommandLine::GetCurrentArgv()` 偷看一下下一個 token，只有在它看起來
+  不像另一個選項（不是以 `-` 或 `/` 開頭）時，才真的把它當成
+  `-defaultdir` 自己的參數；否則就走原本「沒有給參數」的既有路徑
+  （`usecfgdir = true`），效果等同於 `-defaultdir` 剛好是命令列上最後一個
+  token。
+- 已即時驗證：`-defaultdir -break-start drive_c\SPIN.COM`（裸形式，先前
+  會壞掉）以及 `-defaultdir <路徑> -break-start drive_c\SPIN.COM`（明確
+  路徑）現在都能正確在 POST 之前，於 BIOS 重置向量（`F000:FFF0`）讓除
+  錯器停下，符合原始設計。`-break-start` 本身其實從頭到尾都很可靠。
+
+---
+
 ## Phase 7E — DOS file I/O high-level event log (2026-08-18)
 
 **English**
