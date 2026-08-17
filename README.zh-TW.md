@@ -84,7 +84,39 @@ Phase 5C 面向 agent 的 MCP 伺服器，刻意**不**暴露暫存器與記憶�
 
 ## 目前專案狀態
 
-### Phase 5C 結果
+開發進度已推進到 **Phase 7**（完整、逐階段的歷史請見
+〈[更新日誌](CHANGELOG.md)〉，中英文並呈）。〈[AI Agent 使用說明](AGENT_GUIDE.zh-TW.md)〉
+所描述的一般用途、不受限的 MCP 介面——涵蓋除錯器狀態、記憶體／暫存器、
+中斷點（含逐位元組變化的記憶體監看點）、執行控制、鍵盤／滑鼠輸入注入、
+螢幕擷取、滑鼠捕捉與絕對座標定位、輸入派送回條、圍繞停止點的有界執行
+追蹤，以及 DOS 檔案 I/O 事件記錄，共 37 個工具——是目前實際持續開發、
+建議使用本專案的方式。上面「Agent 可見的工具」章節提到的受限 12 個工具
+Phase 5C 介面，則是另一個較窄的介面，僅供本專案自己的受控驗收測試使用。
+
+### Phase 5C 稽核之後新增的能力
+
+| Phase | 新增內容 |
+| --- | --- |
+| 6A | Real mode 與 protected mode 的逐位元組變化記憶體監看點 |
+| 6B | 透過 DOSBox-X 自身輸入處理程式碼進行的鍵盤與滑鼠輸入注入 |
+| 7A | 客體畫面擷取（PNG／RGBA），獨立於 DOSBox-X 視窗或主機桌面 |
+| 7B | 滑鼠捕捉狀態與絕對（像素／正規化）座標定位 |
+| 7C | 輸入派送回條，讓 agent 能確認按鍵／點擊確實抵達模擬器，而不只是 RPC 呼叫有回傳 |
+| 7D | 圍繞每次除錯器停止點、自動擷取的有界執行追蹤（可設定前／後幾條指令） |
+| 7E | DOS 檔案 I/O 事件記錄（`open`／`close`／`read`／`write`／`seek`），記錄每次呼叫真實的呼叫後結果 |
+
+過程中也發現並修正了三個原生橋接層的 bug，各自記錄在
+`CHANGELOG.md`：兩個 DOSBox-X 執行個體同時監聽同一個 port 時的
+Windows 雙重綁定風險、在 stdio 被重新導向／接管時除錯器主控台會當機的
+問題，以及 `-defaultdir`（在沒有帶自己的路徑參數時）會悄悄吃掉下一個
+選項（包含 `-break-start`）的命令列解析錯誤。
+
+每個 Phase 6／7 的能力，都在各自的變更當中對照實際執行的
+`dosbox-x.exe` 進行過即時驗證——確切的驗證方式請見該 Phase 在
+`CHANGELOG.md` 中的條目與所連結的設計文件——而不是仰賴單一份大型
+回歸測試套件。
+
+### Phase 5C 結果（正式的受限 agent 驗收稽核）
 
 | 層級 | 結果 |
 | --- | --- |
@@ -99,18 +131,19 @@ Phase 5C 面向 agent 的 MCP 伺服器，刻意**不**暴露暫存器與記憶�
 作為最終觀察結果，沒有另外透過 `get_debug_status` 獨立確認執行確實
 已經停止。
 
-這項結果被完整保留，而非隱藏或重複執行到通過為止。此傳輸層實作
-可用於受控的研究情境，但本專案並不宣稱已達到完整的自主 agent
-可靠性。
+這項結果被當成歷史性的驗收稽核快照完整保留，而非隱藏或重複執行到
+通過為止。它涵蓋的是受限的 12 個工具 Phase 5C 介面——目前的 37 個工具
+一般用途介面在這次稽核當時還不存在，也還沒經過同等規格的正式驗收
+流程。
 
-### 結案時的回歸測試證據
+### Phase 5C 結案時的回歸測試證據
 
 - Phase 5C 確定性測試套件：**23/23 通過**
 - Phase 5A 即時回歸測試：**16/16 通過**
 - Phase 5B 回歸測試：**40/40 通過**
 - 離線除錯器回歸測試：**17/17 通過**
 
-實作檢查點對應的 commit 為
+Phase 5C 實作檢查點對應的 commit 為
 `8357b435c39d5ad2e589bc611ce15f868fa78cdf`。
 
 ## 預期工作流程
@@ -143,11 +176,12 @@ dosbox-src/          DOSBox-X Native AI Bridge fork，以 git submodule 追蹤
 
 `dosbox-src` 是一個指向
 [`pmanyeh/dosbox-x`](https://github.com/pmanyeh/dosbox-x) 的 git submodule，
-分支為 `ai-mcp-bridge`，固定於 commit
-`5fcf624b787e1017273b313de6f9a70f12422102`
-（在未修改的上游 DOSBox-X 基礎上疊加 Native AI Bridge）。透過一次性的
-乾淨 clone 已獨立驗證能正確 clone 並解析到該確切 commit（詳見
-`docs/phase5c-final-report.md`）。
+分支為 `ai-mcp-bridge`，目前固定於 commit
+`f27fb08fc0a1b831d8cad47a8bb134302ee7e762`
+（在未修改的上游 DOSBox-X 基礎上疊加 Native AI Bridge，內容已涵蓋到
+Phase 7E）。這次工作階段已經即時驗證過 clone 到這個確切 commit 並成功
+建置；至於像 `docs/phase5c-final-report.md` 當初針對 Phase 5C 那個 pin
+所做的、從頭到尾的乾淨 clone 重新驗證，這個新 commit 尚未重做一次。
 
 ### Clone
 
@@ -200,7 +234,7 @@ python -m venv .venv
 不再詢問：
 
 ```
-dosbox-src\bin\x64\Release\dosbox-x.exe -break-start drive_c\STEP.COM
+dosbox-src\bin\x64\Release\dosbox-x.exe -defaultdir -break-start drive_c\STEP.COM
 .venv\Scripts\python.exe tests\test_native_bridge.py
 ```
 
@@ -241,6 +275,12 @@ dosbox-src\bin\x64\Release\dosbox-x.exe -break-start drive_c\STEP.COM
   agent 可呼叫的每一個 MCP 工具、錯誤代碼，以及範例工作流程。若您要把
   agent 接上本專案，請從這裡開始。
 - **[更新日誌](CHANGELOG.md)**——依開發階段整理的重要變更，中英文並呈。
+- [Phase 7 可觀測性與自主控制需求文件](docs/phase7-observability-and-autonomous-control-requirements.md)
+  ——目前（Phase 6／7）能力集的設計文件入口，連結到每個 Phase 各自的設計
+  文件（記憶體監看點、輸入注入、螢幕擷取、滑鼠捕捉、輸入回條、執行
+  追蹤、DOS I/O 事件記錄）。
+- [Dark Sun `GPLI` 除錯案例集](docs/case-study-dark-sun-gpli-debugging.md)
+  ——結合多項上述工具、針對一款真實商業遊戲進行調查的實例。
 - [Phase 5C 傳輸層設計](docs/phase5c-real-mcp-transport-design.md)
 - [Phase 5C 最終報告](docs/phase5c-final-report.md)
 - [Phase 5C 實作狀態檢查點](docs/phase5c-implemented-state-checkpoint.md)

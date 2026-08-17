@@ -89,7 +89,43 @@ bridge, and must not change DOSBox-X state.
 
 ## Current project status
 
-### Phase 5C result
+Development has progressed through **Phase 7** (see [`CHANGELOG.md`](CHANGELOG.md)
+for the full, phase-by-phase history, in English and Traditional Chinese
+together). The general-purpose, unbounded MCP surface described in the
+[AI Agent Usage Guide](AGENT_GUIDE.md) -- 37 tools spanning debugger state,
+memory/registers, breakpoints (including byte-change memory watchpoints),
+execution control, keyboard/mouse input injection, frame capture, mouse
+capture and absolute positioning, input dispatch receipts, bounded execution
+tracing around a stop, and a DOS file I/O event log -- is the current,
+actively developed way to use this project. The bounded 12-tool Phase 5C
+surface described above under "Agent-visible tools" remains a separate,
+narrower research surface used only for this project's own controlled
+acceptance testing.
+
+### Capabilities added since the Phase 5C audit
+
+| Phase | What it added |
+| --- | --- |
+| 6A | Real-mode and protected-mode byte-change memory watchpoints |
+| 6B | Keyboard and mouse input injection through DOSBox-X's own input-handling code |
+| 7A | Guest frame capture (PNG/RGBA), independent of the DOSBox-X window or host desktop |
+| 7B | Mouse capture status and absolute (pixel/normalized) positioning |
+| 7C | Input dispatch receipts, so an agent can confirm a keypress/click actually reached the emulator, not just that the RPC call returned |
+| 7D | A bounded execution trace (configurable before/after instructions) captured automatically around every debugger stop |
+| 7E | A DOS file I/O event log (`open`/`close`/`read`/`write`/`seek`) recording each call's real post-call result |
+
+Three native-bridge bugs found and fixed along the way, each documented in
+`CHANGELOG.md`: a Windows double-bind risk when two DOSBox-X instances listen
+on the same port, a debugger-console crash under piped/redirected stdio, and
+a command-line parsing bug where `-defaultdir` (used without its own path
+argument) could silently swallow the next option, including `-break-start`.
+
+Every Phase 6/7 capability was verified live against a running `dosbox-x.exe`
+build as part of its own change -- see that phase's `CHANGELOG.md` entry and
+linked design doc for the specific test performed -- rather than through a
+single bulk regression suite.
+
+### Phase 5C result (formal bounded-agent acceptance audit)
 
 | Layer | Result |
 | --- | --- |
@@ -104,18 +140,20 @@ agents completed the intended breakpoint/run/register workflow, but used
 `get_cpu_state` as their final observation without independently confirming the
 stopped state through `get_debug_status`.
 
-This result is preserved rather than hidden or repeatedly rerun until a pass.
-The transport implementation is usable for controlled research, but the project
-does not claim complete autonomous-agent reliability.
+This result is preserved as a historical acceptance-audit snapshot rather than
+hidden or repeatedly rerun until a pass. It covers the bounded, 12-tool Phase
+5C surface specifically -- the current 37-tool general-purpose surface did not
+exist yet at the time of this audit and has not itself been put through an
+equivalent formal acceptance process.
 
-### Regression evidence at closeout
+### Regression evidence at the Phase 5C closeout
 
 - Phase 5C deterministic suite: **23/23 passed**
 - Phase 5A live regression: **16/16 passed**
 - Phase 5B regression: **40/40 passed**
 - Offline debugger regression: **17/17 passed**
 
-The implementation checkpoint is commit
+The Phase 5C implementation checkpoint is commit
 `8357b435c39d5ad2e589bc611ce15f868fa78cdf`.
 
 ## Intended workflow
@@ -150,10 +188,13 @@ dosbox-src/          DOSBox-X Native AI Bridge fork, tracked as a git submodule
 
 `dosbox-src` is a git submodule pointing at
 [`pmanyeh/dosbox-x`](https://github.com/pmanyeh/dosbox-x), branch
-`ai-mcp-bridge`, pinned at commit `5fcf624b787e1017273b313de6f9a70f12422102`
-(the Native AI Bridge on top of an unmodified upstream DOSBox-X base). Cloning
-it and resolving to that exact commit has been independently verified via a
-disposable fresh clone (see `docs/phase5c-final-report.md`).
+`ai-mcp-bridge`, currently pinned at commit
+`f27fb08fc0a1b831d8cad47a8bb134302ee7e762` (the Native AI Bridge, through
+Phase 7E, on top of an unmodified upstream DOSBox-X base). Cloning to that
+exact commit and building it was verified live as part of this session's own
+work; a disposable-fresh-clone re-verification of the full clone-to-build
+path at this specific commit, in the style `docs/phase5c-final-report.md`
+performed for the original Phase 5C pin, has not been repeated since.
 
 ### Clone
 
@@ -206,7 +247,7 @@ will prompt once for a working directory; choose the repository root and
 (optionally) save it so future launches skip the prompt:
 
 ```
-dosbox-src\bin\x64\Release\dosbox-x.exe -break-start drive_c\STEP.COM
+dosbox-src\bin\x64\Release\dosbox-x.exe -defaultdir -break-start drive_c\STEP.COM
 .venv\Scripts\python.exe tests\test_native_bridge.py
 ```
 
@@ -247,6 +288,14 @@ committed -- it's safe to delete at any time and is already `.gitignore`d.
   workflows. Start here if you're connecting an agent to this project.
 - **[Changelog](CHANGELOG.md)** -- notable changes by development phase,
   in English and Traditional Chinese together.
+- [Phase 7 observability and autonomous-control requirements](docs/phase7-observability-and-autonomous-control-requirements.md)
+  -- the design entry point for the current (Phase 6/7) capability set, with
+  links out to each phase's own design doc (memory watchpoints, input
+  injection, frame capture, mouse capture, input receipts, execution trace,
+  DOS I/O event log).
+- [Dark Sun `GPLI` debugging case study](docs/case-study-dark-sun-gpli-debugging.md)
+  (Traditional Chinese only) -- a worked example of using several of these
+  tools together against a real commercial game.
 - [Phase 5C transport design](docs/phase5c-real-mcp-transport-design.md)
 - [Phase 5C final report](docs/phase5c-final-report.md)
 - [Phase 5C implemented-state checkpoint](docs/phase5c-implemented-state-checkpoint.md)
