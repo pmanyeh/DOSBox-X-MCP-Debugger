@@ -121,7 +121,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 }
 ```
 
-`ai/server.py` 是不受限、通用的工具介面（共 26 個工具，詳見下方），也是
+`ai/server.py` 是不受限、通用的工具介面（共 30 個工具，詳見下方），也是
 一般 agent 使用時應該連線的對象。另外還有兩個 MCP 進入點，用途較為特定、
 較窄，**多數 agent 不應該**連線到它們：
 
@@ -142,7 +142,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 
 ## 可用工具
 
-共 26 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
+共 30 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
 狀態下呼叫，會得到明確的錯誤（見〈[錯誤代碼](#錯誤代碼)〉），而不是卡住或
 悄悄地什麼都不做。
 
@@ -275,6 +275,35 @@ fork 的預設建置設定已經啟用它，見〈[安裝步驟](#安裝步驟)�
 通常會逾時（`EXECUTION_TIMEOUT`）而不是立刻回傳結果。要穩定擷取，請先呼叫
 `continue_execution()`。
 
+### 滑鼠捕獲狀態與絕對座標定位
+
+| 工具 | 參數 | 回傳 | 前置條件 |
+|---|---|---|---|
+| `get_mouse_capture` | 無 | `{"captured", "autolock", "mode": "absolute"\|"relative"\|"unavailable", "guest_width", "guest_height", "last_guest_x", "last_guest_y"}` | 停止或執行中皆可呼叫 |
+| `set_mouse_capture` | `captured: bool` | 與 `get_mouse_capture` 相同結構 | 停止或執行中皆可呼叫；不支援時回傳 `CAPTURE_UNAVAILABLE` |
+| `move_mouse_absolute` | `x: 數字`、`y: 數字`、`coordinate_space: "guest_pixels"\|"normalized"`（預設 `"guest_pixels"`）、`clamp: bool`（預設 `false`） | `{"queued", "dispatched", "guest_x", "guest_y", "coordinate_space": "guest_pixels", "clamped", "input_sequence"}` | 客體正在執行中；否則回傳 `DEBUGGER_STOPPED` |
+| `click_at` | 同 `move_mouse_absolute`，外加 `button: 0\|1\|2`（預設 `0`） | 同 `move_mouse_absolute`，外加 `"clicked": true` | 同上 |
+
+`set_mouse_capture` 的效果跟使用者按下 `Ctrl+F10` 完全相同——絕不會移動
+主機游標、改變視窗焦點，或影響任何其他程式。`move_mouse_absolute`／
+`click_at` 走的是 DOSBox-X 自己既有的無縫／整合滑鼠定位內部路徑——跟
+`move_mouse_relative` 不同，這兩個呼叫都不需要滑鼠處於捕獲狀態。
+
+`get_mouse_capture` 回傳的 `guest_width`／`guest_height` 一定跟
+`capture_frame` 回報的當前畫面寬高一致（兩者都源自同一份 DOSBox-X
+render 狀態），所以可以直接把 `capture_frame` 截圖裡挑到的像素座標，原封
+不動地傳給 `click_at` 的 `"guest_pixels"` 座標空間——也就是「看畫面、點
+座標」這個自然的流程。`"normalized"` 座標空間是 `[0.0, 1.0] x [0.0,
+1.0]`，原點在左上角。超出範圍的座標若 `clamp=false` 會回傳
+`INVALID_PARAMETER`；`clamp=true` 則會夾到合法範圍內。
+
+**已知限制**：只有在 `get_mouse_capture` 的 `"mode"` 是 `"absolute"` 時，
+絕對座標定位才可用——例如已啟動的客體作業系統，或沒有 virtual-8086 的
+保護模式，會回報 `"relative"`，此時 `move_mouse_absolute`／`click_at`
+會回傳 `ABSOLUTE_MOUSE_UNAVAILABLE`。`"last_guest_x"`／`"last_guest_y"`
+是橋接層最後一次成功送達的座標——不是「客體程式真的讀到了」的保證（跟本
+指南其他地方 `guest_observed` 類的警語一致）。
+
 ## 錯誤代碼
 
 每一次失敗都會以結構化的 `{"code", "message"}` 錯誤回傳（絕不是原始例外
@@ -295,6 +324,8 @@ fork 的預設建置設定已經啟用它，見〈[安裝步驟](#安裝步驟)�
 | `INVALID_ADDRESS` | `"SEG:OFF"`／`"SELECTOR:OFFSET"` 字串格式錯誤 | 修正位址格式 |
 | `INTERNAL_ERROR` | 原生橋接層本身的失敗，例如在非 heavy-debug 建置上設定記憶體監看點 | 除非改變建置／環境，否則無法重試 |
 | `FRAME_TOO_LARGE` | `capture_frame` 編碼後的畫面超過橋接層的大小上限 | 用錯誤訊息裡的 `suggested_max_width`／`suggested_max_height` 重試 |
+| `CAPTURE_UNAVAILABLE` | 呼叫 `set_mouse_capture` 時，目前的畫面輸出後端沒有可控制的捕獲狀態 | 目前本 fork 已知的建置都不會產生這個錯誤 |
+| `ABSOLUTE_MOUSE_UNAVAILABLE` | 呼叫 `move_mouse_absolute`／`click_at` 時，絕對座標定位在客體目前的模式下無法使用 | 先檢查 `get_mouse_capture` 的 `"mode"` 欄位 |
 | `DOSBOX_NOT_CONNECTED` | 用戶端層級：橋接層無法連線（DOSBox-X 未執行，或建置時未啟用 `C_DEBUG`） | 啟動或重新啟動 DOSBox-X |
 | `DOSBOX_TIMEOUT` | 用戶端層級：橋接層未在時限內回應 | 通常是暫時性的；也可能代表 DOSBox-X 卡住了 |
 

@@ -12,6 +12,82 @@ English and Traditional Chinese together.
 
 ---
 
+## Phase 7B — Mouse capture status & absolute positioning (2026-08-17)
+
+**English**
+
+- Added `input.mouse.capture.get`/`.set`, `input.mouse.move_absolute`,
+  and `input.mouse.click_at` to the native AI bridge. `capture.get`/
+  `.set` work whether the debugger is stopped or running (unlike every
+  other `input.*` method) via a new dual-route mechanism reusing the
+  two existing request-drain hooks (`g_requestQueue`/`DEBUG_AI_Poll()`
+  while stopped, `g_pendingInputs`/`DEBUG_AI_CheckPendingInput()` while
+  running) rather than adding a third one.
+- `move_absolute`/`click_at` reuse DOSBox-X's own existing
+  seamless/integrated absolute-mouse-positioning code path
+  (`Mouse_CursorMoved(..., emulate=false)`, `src/ints/mouse.cpp`) --
+  not a bridge invention. New `Mouse_AbsolutePositioningAvailable()`
+  (`mouse.h`/`mouse.cpp`) exposes exactly the condition that path
+  already checks, so `ABSOLUTE_MOUSE_UNAVAILABLE` is never guessed at.
+  `click_at` performs move + button-down + button-up in one
+  emulator-thread dispatch, so nothing else can interleave.
+- `"guest_pixels"` coordinates are computed from the SAME
+  `render.src.width/height` formula Phase 7A's `video.frame.capture`
+  already uses, so a pixel picked from a screenshot maps directly onto
+  `click_at` -- verified live: all four exact frame corners
+  (`(0,0)`/`(w-1,0)`/`(0,h-1)`/`(w-1,h-1)`) landed exactly on-pixel.
+- Wired into `DOSBoxClient`/`ai/server.py` (bringing the tool count to
+  30) and `AGENT_GUIDE.md`/`.zh-TW.md`. New error codes
+  `CAPTURE_UNAVAILABLE`, `ABSOLUTE_MOUSE_UNAVAILABLE`.
+- Verified live (running route only -- see design doc) via
+  `DOSBoxClient`, the actual MCP tool functions, and raw protocol
+  calls. The stopped route could not be independently exercised this
+  session: this session's automated launch environment could not
+  reliably reach a genuinely stopped debugger at all (`-break-start`
+  left even the long-established `cpu.get` reporting
+  `DEBUGGER_NOT_STOPPED`, and `execution.pause` crashed `dosbox-x.exe`
+  outright on a completely fresh instance with no Phase 7B methods
+  called) -- a pre-existing condition of this environment, not a
+  regression from this work, and tracked as a follow-up rather than
+  assumed fine.
+- See `docs/phase7b-mouse-capture-and-absolute-input-design.md` for
+  the full design, source investigation, and verification notes.
+
+**繁體中文**
+
+- 為原生 AI 橋接層新增 `input.mouse.capture.get`／`.set`、
+  `input.mouse.move_absolute` 與 `input.mouse.click_at`。跟其他所有
+  `input.*` 方法不同，`capture.get`／`.set` 不論除錯器是停止還是執行中
+  都能運作——透過新的雙路由機制重用既有的兩個請求排空掛鉤點（停止時走
+  `g_requestQueue`／`DEBUG_AI_Poll()`，執行中走 `g_pendingInputs`／
+  `DEBUG_AI_CheckPendingInput()`），而不是再新增第三個掛鉤點。
+- `move_absolute`／`click_at` 重用的是 DOSBox-X 自己既有的無縫／整合式
+  絕對滑鼠定位程式路徑（`Mouse_CursorMoved(..., emulate=false)`，
+  `src/ints/mouse.cpp`）——不是橋接層自創的機制。新增的
+  `Mouse_AbsolutePositioningAvailable()`（`mouse.h`／`mouse.cpp`）
+  暴露的正是該路徑本來就會檢查的條件，因此 `ABSOLUTE_MOUSE_UNAVAILABLE`
+  絕不是用猜的。`click_at` 會在同一次 emulator-thread dispatch 中完成
+  移動、按下、放開，中間不會有其他輸入插隊。
+- `"guest_pixels"` 座標的計算方式，跟 Phase 7A `video.frame.capture`
+  已經在用的 `render.src.width/height` 公式完全相同，因此從截圖挑到的
+  像素座標可以直接對應到 `click_at`——已實機驗證：畫面四個精確角落
+  （`(0,0)`／`(w-1,0)`／`(0,h-1)`／`(w-1,h-1)`）都精準落在像素上。
+- 已接上 `DOSBoxClient`／`ai/server.py`（工具數來到 30 個）與
+  `AGENT_GUIDE.md`／`.zh-TW.md`。新增錯誤代碼 `CAPTURE_UNAVAILABLE`、
+  `ABSOLUTE_MOUSE_UNAVAILABLE`。
+- 已實機驗證（僅限執行中路由——詳見設計文件）：透過 `DOSBoxClient`、
+  實際的 MCP 工具函式，以及原始協定呼叫。這次 session 沒能獨立驗證
+  「停止路由」：這次自動化啟動的環境完全無法穩定進入真正停止的除錯器
+  狀態（`-break-start` 之後，連早就驗證過的既有方法 `cpu.get` 都回報
+  `DEBUGGER_NOT_STOPPED`；而呼叫 `execution.pause` 甚至會讓
+  `dosbox-x.exe` 直接當掉，在全新、沒呼叫過任何 Phase 7B 方法的實例上
+  也一樣）——這是這個環境本來就有的既有問題，不是這次改動造成的
+  回歸，已記錄為後續追查項目，而非假設沒事。
+- 完整設計、原始碼調查與驗證細節見
+  `docs/phase7b-mouse-capture-and-absolute-input-design.md`。
+
+---
+
 ## Bridge fix — Windows double-bind on 127.0.0.1:9876 (2026-08-17)
 
 **English**

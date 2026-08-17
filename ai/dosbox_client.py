@@ -144,6 +144,28 @@ class DOSBoxFrameTooLarge(DOSBoxClientError):
     code = "FRAME_TOO_LARGE"
 
 
+class DOSBoxCaptureUnavailable(DOSBoxClientError):
+    """set_mouse_capture() was called but the current video backend/
+    platform has no safely controllable capture state (see native error
+    code CAPTURE_UNAVAILABLE, Phase 7B). Not currently produced by any
+    known build configuration in this fork -- reserved for forward
+    compatibility rather than removed."""
+
+    code = "CAPTURE_UNAVAILABLE"
+
+
+class DOSBoxAbsoluteMouseUnavailable(DOSBoxClientError):
+    """move_mouse_absolute()/click_at() was called but absolute
+    positioning is not currently usable in the guest's mode (see native
+    error code ABSOLUTE_MOUSE_UNAVAILABLE, Phase 7B) -- e.g. a booted
+    guest OS, protected mode without virtual-8086, or a video mode that
+    has not yet established a mouse coordinate range. Check
+    get_mouse_capture()'s "mode" field ("absolute" vs "relative") before
+    relying on absolute positioning."""
+
+    code = "ABSOLUTE_MOUSE_UNAVAILABLE"
+
+
 _NATIVE_ERROR_MAP = {
     "DEBUGGER_NOT_STOPPED": DOSBoxDebuggerNotStopped,
     "MEMORY_ERROR": DOSBoxMemoryError,
@@ -155,6 +177,8 @@ _NATIVE_ERROR_MAP = {
     "DEBUGGER_STOPPED": DOSBoxDebuggerStopped,
     "EXECUTION_TIMEOUT": DOSBoxExecutionTimeout,
     "FRAME_TOO_LARGE": DOSBoxFrameTooLarge,
+    "CAPTURE_UNAVAILABLE": DOSBoxCaptureUnavailable,
+    "ABSOLUTE_MOUSE_UNAVAILABLE": DOSBoxAbsoluteMouseUnavailable,
 }
 
 
@@ -504,3 +528,94 @@ class DOSBoxClient:
         if max_height is not None:
             params["max_height"] = max_height
         return self.request("video.frame.capture", params)
+
+    # -- mouse capture status & absolute positioning (Phase 7B) --
+
+    def get_mouse_capture(self) -> dict:
+        """Read DOSBox-X's own mouse-capture state (whether Ctrl+F10 is
+        currently "on") and absolute-positioning capability, without
+        touching the host cursor or window focus. Meaningful whether the
+        debugger is stopped or running, unlike move_mouse_absolute()/
+        click_at() below.
+
+        Result: {"captured": bool, "autolock": bool,
+        "mode": "absolute"|"relative"|"unavailable", "guest_width":
+        int|None, "guest_height": int|None, "last_guest_x": int|None,
+        "last_guest_y": int|None}. "guest_width"/"guest_height" match
+        capture_frame()'s own reported width/height for the current video
+        mode (both derive from the same DOSBox-X render state) -- use
+        them to convert a pixel picked from a capture_frame() screenshot
+        into click_at()'s "guest_pixels" coordinate space directly.
+        "last_guest_x"/"last_guest_y" are the bridge's last successfully
+        dispatched position, not a claim about what the guest program
+        actually read."""
+
+        return self.request("input.mouse.capture.get")
+
+    def set_mouse_capture(self, captured: bool) -> dict:
+        """Toggle DOSBox-X's own mouse capture, the exact same effect as
+        the user pressing Ctrl+F10 -- never moves the host cursor,
+        changes window focus, or affects any other program. Meaningful
+        whether the debugger is stopped or running. Returns the same
+        shape as get_mouse_capture(). Raises DOSBoxCaptureUnavailable
+        (native CAPTURE_UNAVAILABLE) if the current video backend has no
+        safely controllable capture state."""
+
+        return self.request("input.mouse.capture.set", {"captured": captured})
+
+    def move_mouse_absolute(
+        self,
+        x: float,
+        y: float,
+        coordinate_space: str = "guest_pixels",
+        clamp: bool = False,
+    ) -> dict:
+        """Move the guest mouse cursor to an absolute position, through
+        the SAME internal DOSBox-X path used for seamless/integrated
+        mouse positioning (not a bridge invention) -- unlike
+        move_mouse_relative(), this does not require mouse capture to be
+        on. Only reaches the guest while it is running (not stopped);
+        raises DOSBoxDebuggerStopped otherwise, like every other input.*
+        method.
+
+        `coordinate_space` is "guest_pixels" (origin top-left, matching
+        capture_frame()'s reported width/height -- see
+        get_mouse_capture()) or "normalized" ([0.0, 1.0] x [0.0, 1.0]).
+        Out-of-range coordinates raise DOSBoxProtocolError
+        (INVALID_PARAMETER) unless `clamp=True`, in which case they are
+        clamped to the guest's bounds and the result's "clamped" field is
+        true. Raises DOSBoxAbsoluteMouseUnavailable (native
+        ABSOLUTE_MOUSE_UNAVAILABLE) if absolute positioning is not
+        currently usable in the guest's mode -- check
+        get_mouse_capture()'s "mode" field first if unsure.
+
+        Result: {"queued": true, "dispatched": true, "guest_x": number,
+        "guest_y": number, "coordinate_space": "guest_pixels",
+        "clamped": bool, "input_sequence": int} -- guest_x/guest_y are
+        always reported in guest_pixels, even for a normalized-space
+        request."""
+
+        return self.request(
+            "input.mouse.move_absolute",
+            {"x": x, "y": y, "coordinate_space": coordinate_space, "clamp": clamp},
+        )
+
+    def click_at(
+        self,
+        x: float,
+        y: float,
+        button: int = 0,
+        coordinate_space: str = "guest_pixels",
+        clamp: bool = False,
+    ) -> dict:
+        """Move to an absolute position and click, in a single
+        emulator-thread dispatch -- nothing else can insert between the
+        move and the click. `button` is 0 (left), 1 (right), or 2
+        (middle). See move_mouse_absolute() for `coordinate_space`,
+        `clamp`, error conditions, and the result shape (this adds
+        "clicked": true)."""
+
+        return self.request(
+            "input.mouse.click_at",
+            {"x": x, "y": y, "button": button, "coordinate_space": coordinate_space, "clamp": clamp},
+        )

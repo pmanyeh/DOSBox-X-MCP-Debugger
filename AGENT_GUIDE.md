@@ -126,7 +126,7 @@ Example MCP server config (adjust paths to your clone location):
 }
 ```
 
-`ai/server.py` is the unbounded, general-purpose tool surface (26 tools,
+`ai/server.py` is the unbounded, general-purpose tool surface (30 tools,
 listed below) and is the one intended for normal agent use. Two other MCP
 entry points exist for specific, narrower purposes and are **not** what
 most agents should connect to:
@@ -149,7 +149,7 @@ rather than a `DOSBOX_NOT_CONNECTED` error.
 
 ## Available tools
 
-26 tools, grouped by what they do. "Precondition" is the debugger state a
+30 tools, grouped by what they do. "Precondition" is the debugger state a
 call requires; calling it in the wrong state returns a specific error
 (see [Error codes](#error-codes)) rather than blocking or silently doing
 nothing.
@@ -293,6 +293,40 @@ actually running) -- calling `capture_frame` while the debugger is
 stopped will usually time out (`EXECUTION_TIMEOUT`) rather than return
 instantly. Call `continue_execution()` first for a reliable capture.
 
+### Mouse capture & absolute positioning
+
+| Tool | Parameters | Returns | Precondition |
+|---|---|---|---|
+| `get_mouse_capture` | none | `{"captured", "autolock", "mode": "absolute"\|"relative"\|"unavailable", "guest_width", "guest_height", "last_guest_x", "last_guest_y"}` | meaningful whether stopped or running |
+| `set_mouse_capture` | `captured: bool` | same shape as `get_mouse_capture` | meaningful whether stopped or running; fails `CAPTURE_UNAVAILABLE` if unsupported |
+| `move_mouse_absolute` | `x: number`, `y: number`, `coordinate_space: "guest_pixels"\|"normalized"` (default `"guest_pixels"`), `clamp: bool` (default `false`) | `{"queued", "dispatched", "guest_x", "guest_y", "coordinate_space": "guest_pixels", "clamped", "input_sequence"}` | guest execution running; fails `DEBUGGER_STOPPED` otherwise |
+| `click_at` | same as `move_mouse_absolute` plus `button: 0\|1\|2` (default `0`) | same as `move_mouse_absolute` plus `"clicked": true` | same |
+
+`set_mouse_capture` is the exact same effect as the user pressing
+`Ctrl+F10` -- never moves the host cursor, changes window focus, or
+affects any other program. `move_mouse_absolute`/`click_at` go through
+the same internal path DOSBox-X's own seamless/integrated mouse
+positioning uses -- unlike `move_mouse_relative`, neither requires mouse
+capture to be on.
+
+`guest_width`/`guest_height` (from `get_mouse_capture`) always match
+`capture_frame`'s own reported width/height for the current video mode
+(both derive from the same DOSBox-X render state), so a pixel picked
+from a `capture_frame` screenshot can be passed straight to `click_at`
+in `"guest_pixels"` space -- the natural "look at the screenshot, click
+here" loop. `"normalized"` space is `[0.0, 1.0] x [0.0, 1.0]`, origin
+top-left. Out-of-range coordinates fail `INVALID_PARAMETER` unless
+`clamp=true`.
+
+**Known limitation**: absolute positioning is only usable when
+`get_mouse_capture`'s `"mode"` reads `"absolute"` -- e.g. a booted guest
+OS or protected mode without virtual-8086 reports `"relative"` instead,
+and `move_mouse_absolute`/`click_at` fail `ABSOLUTE_MOUSE_UNAVAILABLE` in
+that state. `"last_guest_x"`/`"last_guest_y"` are the bridge's last
+successfully dispatched position -- never a claim about what the guest
+program actually read (see `guest_observed`-style caveats throughout
+this guide).
+
 ## Error codes
 
 Every failure comes back as a structured `{"code", "message"}` error
@@ -314,6 +348,8 @@ specifically branch on:
 | `INVALID_ADDRESS` | Malformed `"SEG:OFF"`/`"SELECTOR:OFFSET"` string | Fix the address format |
 | `INTERNAL_ERROR` | Native bridge failure, e.g. a memory watchpoint on a non-heavy-debug build | Not retryable without changing the build/environment |
 | `FRAME_TOO_LARGE` | `capture_frame`'s encoded frame exceeds the bridge's payload cap | Retry with the `suggested_max_width`/`suggested_max_height` in the error message |
+| `CAPTURE_UNAVAILABLE` | `set_mouse_capture` called but the current video backend has no controllable capture state | Not currently produced by any known build in this fork |
+| `ABSOLUTE_MOUSE_UNAVAILABLE` | `move_mouse_absolute`/`click_at` called but absolute positioning isn't usable in the guest's current mode | Check `get_mouse_capture`'s `"mode"` field first |
 | `DOSBOX_NOT_CONNECTED` | Client-side: bridge unreachable (DOSBox-X not running, or not built with `C_DEBUG`) | Start/relaunch DOSBox-X |
 | `DOSBOX_TIMEOUT` | Client-side: bridge didn't answer in time | Usually transient; may indicate DOSBox-X is stuck |
 

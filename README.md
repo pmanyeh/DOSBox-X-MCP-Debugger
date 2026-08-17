@@ -54,7 +54,7 @@ disassembly are backed by the native DOSBox-X debugger mechanisms.
 
 This section covers the bounded Phase 5C research surface specifically
 (used for this project's own controlled acceptance testing). For the
-general-purpose, unbounded 26-tool surface a normal agent should actually
+general-purpose, unbounded 30-tool surface a normal agent should actually
 connect to, see the [AI Agent Usage Guide](AGENT_GUIDE.md).
 
 The current bounded Phase 5C surface exposes 12 tools:

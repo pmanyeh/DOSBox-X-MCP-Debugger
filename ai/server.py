@@ -49,7 +49,7 @@ def get_project_status() -> dict:
 
     return {
         "project": "DOSBox-X AI Debugger",
-        "phase": "P6B",
+        "phase": "P7B",
         "dosbox_bridge": f"native ({dosbox.host}:{dosbox.port})",
         "debugger": "native",
         "mcp": "online",
@@ -385,6 +385,77 @@ def capture_frame(format: str = "png", max_width: int = None, max_height: int = 
         return [metadata, Image(data=base64.b64decode(result["png_base64"]), format="png")]
 
     return result
+
+
+@mcp.tool()
+def get_mouse_capture() -> dict:
+    """
+    Read DOSBox-X's own mouse-capture state on the real, running DOSBox-X
+    instance (whether Ctrl+F10 is currently "on") and whether absolute
+    positioning is currently usable, without touching the host cursor or
+    window focus. Meaningful whether the debugger is stopped or running.
+
+    Result includes "guest_width"/"guest_height" -- these match
+    capture_frame()'s own reported width/height for the current video
+    mode, so a pixel picked from a capture_frame() screenshot can be
+    passed straight to click_at() in "guest_pixels" space.
+    """
+
+    return _guarded_native(dosbox.get_mouse_capture)
+
+
+@mcp.tool()
+def set_mouse_capture(captured: bool) -> dict:
+    """
+    Toggle DOSBox-X's own mouse capture on the real, running DOSBox-X
+    instance -- the exact same effect as the user pressing Ctrl+F10.
+    Never moves the host cursor, changes window focus, or affects any
+    other program. Meaningful whether the debugger is stopped or
+    running. Fails with CAPTURE_UNAVAILABLE if the current video backend
+    has no safely controllable capture state.
+    """
+
+    return _guarded_native(dosbox.set_mouse_capture, captured)
+
+
+@mcp.tool()
+def move_mouse_absolute(
+    x: float, y: float, coordinate_space: str = "guest_pixels", clamp: bool = False
+) -> dict:
+    """
+    Move the guest mouse cursor to an absolute position on the real,
+    running DOSBox-X instance, through the SAME internal path DOSBox-X's
+    own seamless/integrated mouse positioning uses -- unlike
+    move_mouse_relative(), this does not require mouse capture to be on.
+    Only valid while guest execution is running; fails with
+    DEBUGGER_STOPPED otherwise.
+
+    `coordinate_space` is "guest_pixels" (origin top-left, matching
+    capture_frame()'s reported width/height -- see get_mouse_capture())
+    or "normalized" ([0.0, 1.0] x [0.0, 1.0]). Out-of-range coordinates
+    fail with INVALID_PARAMETER unless clamp=true, in which case they
+    are clamped to the guest's bounds and the result's "clamped" field
+    is true. Fails with ABSOLUTE_MOUSE_UNAVAILABLE if absolute
+    positioning is not currently usable in the guest's mode -- check
+    get_mouse_capture()'s "mode" field first if unsure.
+    """
+
+    return _guarded_native(dosbox.move_mouse_absolute, x, y, coordinate_space, clamp)
+
+
+@mcp.tool()
+def click_at(
+    x: float, y: float, button: int = 0, coordinate_space: str = "guest_pixels", clamp: bool = False
+) -> dict:
+    """
+    Move to an absolute position and click on the real, running DOSBox-X
+    instance, in a single emulator-thread dispatch -- nothing else can
+    insert between the move and the click. `button` is 0 (left), 1
+    (right), or 2 (middle). See move_mouse_absolute() for
+    `coordinate_space`, `clamp`, and error conditions.
+    """
+
+    return _guarded_native(dosbox.click_at, x, y, button, coordinate_space, clamp)
 
 
 if __name__ == "__main__":
