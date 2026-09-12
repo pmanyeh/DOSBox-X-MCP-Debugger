@@ -2,33 +2,64 @@
 
 *[English](README.md) | [繁體中文](README.zh-TW.md)*
 
-An experimental MCP integration that lets AI agents inspect and control the
-native DOSBox-X debugger through a bounded, auditable tool interface.
+> **Give AI agents direct, structured access to the real DOSBox-X debugger.**
 
-The project is intended for DOS program debugging and reverse-engineering
-research, including investigation of legacy game data flows such as runtime
-text decoding, phrase composition, script execution, and rendering pipelines.
+DOSBox-X MCP Debugger connects AI agents to the native DOSBox-X debugger through
+the Model Context Protocol (MCP). Instead of asking a person to copy registers,
+memory dumps, disassembly, and breakpoint results back and forth, an agent can
+inspect and control the same guest CPU and debugger state directly.
+
+It is built for **legacy DOS debugging and reverse engineering**, especially
+investigations where runtime evidence matters: discovering how text is decoded
+or assembled, following script execution, tracing rendering pipelines, watching
+memory changes, and reproducing input-dependent behavior.
+
+## What it enables
+
+The current general-purpose MCP interface exposes **37 tools** across the
+debugging workflow:
+
+| Area | Examples |
+| --- | --- |
+| Inspect | CPU state, registers, memory, current instruction, disassembly |
+| Control | Breakpoints, stepping, pause/continue, bounded execution traces |
+| Observe | Byte-change watchpoints, guest frame capture, DOS file I/O events |
+| Interact | Keyboard and mouse injection, capture state, dispatch receipts |
+| Audit | Structured results and evidence suitable for agent-driven research |
+
+See the **[AI Agent Usage Guide](AGENT_GUIDE.md)** for setup, the complete tool
+reference, error behavior, and example workflows.
+
+## Why this is different
+
+This is not GUI automation and it does not simulate debugger output. MCP calls
+travel through a Python client and a native loopback bridge into DOSBox-X's
+existing debugger and input-handling mechanisms. Breakpoints, execution state,
+registers, memory, disassembly, frames, and event observations come from the
+running emulator.
+
+That makes the project useful for work such as:
+
+- tracing how a legacy game forms a line of text before rendering;
+- identifying code and data involved in runtime decoding or phrase composition;
+- observing memory changes around a reproducible event;
+- correlating keyboard or mouse input with execution, frames, and DOS file I/O;
+- producing an auditable trail of observations, inferences, and open questions.
+
+## Project maturity
 
 > [!IMPORTANT]
-> This is an engineering preview. The real MCP transport and enforcement layers
-> are implemented and tested, but formal Phase 5C autonomous-agent acceptance is
-> **NOT PASS**: 3 of 4 representative agent scenarios passed. See
-> [`docs/phase5c-final-report.md`](docs/phase5c-final-report.md) for the complete,
-> unabridged result.
+> This is an **engineering preview**, not a turnkey autonomous reverse-engineering
+> product. The native bridge and the current 37-tool general-purpose interface
+> are actively developed and have been verified through phase-specific live
+> tests. The earlier formal **Phase 5C bounded-agent acceptance audit remains
+> NOT PASS (3/4 composed evidence)** and is preserved unchanged as an honest
+> historical result. See [Current project status](#current-project-status) and
+> the [Phase 5C final report](docs/phase5c-final-report.md).
 
-## Why this project exists
-
-Traditional AI-assisted debugging often requires a person to act as a manual
-relay:
-
-1. the AI suggests a breakpoint or debugger action;
-2. the person performs it in the GUI;
-3. the person copies registers, memory, or disassembly back to the AI;
-4. the process repeats one instruction at a time.
-
-DOSBox-X MCP Debugger removes that relay. An agent can use native MCP tools to
-observe and control the same DOSBox-X debugger and guest CPU that a human sees,
-while every request remains bounded and traceable.
+The project also retains a separate bounded 12-tool research surface for
+controlled acceptance testing. It intentionally excludes register and memory
+writes and enforces session-level tool and execution budgets.
 
 ## Architecture
 
