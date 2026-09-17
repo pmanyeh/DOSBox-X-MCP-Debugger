@@ -150,7 +150,7 @@ Example MCP server config (adjust paths to your clone location):
 }
 ```
 
-`ai/server.py` is the unbounded, general-purpose tool surface (37 tools,
+`ai/server.py` is the unbounded, general-purpose tool surface (38 tools,
 listed below) and is the one intended for normal agent use. Two other MCP
 entry points exist for specific, narrower purposes and are **not** what
 most agents should connect to:
@@ -173,7 +173,7 @@ rather than a `DOSBOX_NOT_CONNECTED` error.
 
 ## Available tools
 
-37 tools, grouped by what they do. "Precondition" is the debugger state a
+38 tools, grouped by what they do. "Precondition" is the debugger state a
 call requires; calling it in the wrong state returns a specific error
 (see [Error codes](#error-codes)) rather than blocking or silently doing
 nothing.
@@ -206,6 +206,12 @@ nothing.
 | Tool | Parameters | Returns | Precondition |
 |---|---|---|---|
 | `write_register` | `register: str`, `value: hex string` | write confirmation | debugger stopped; `register` must be one of `eax/ebx/ecx/edx/esi/edi/ebp` -- EIP, segment registers, ESP, and EFLAGS are rejected (`REGISTER_NOT_WRITABLE`) to avoid desyncing execution |
+
+### I/O ports
+
+| Tool | Parameters | Returns | Precondition |
+|---|---|---|---|
+| `write_io_port` | `port: hex string`, `value: hex string`, `width: int` (1/2/4 bytes, default 1) | write confirmation | debugger stopped; `port` must be one of the whitelisted VGA CRTC/Sequencer/Graphics Controller/Attribute Controller/DAC/Misc Output/Feature Control ports -- any other port is rejected (`PORT_NOT_WRITABLE`). Useful e.g. for switching the VGA read plane (write `04` to Graphics Controller index port `3CE`, then the plane number to data port `3CF`) while stopped at a breakpoint -- `write_memory` cannot reach I/O space |
 
 ### Breakpoints
 

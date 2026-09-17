@@ -132,6 +132,23 @@ def write_register(register: str, value: str) -> dict:
 
 
 @mcp.tool()
+def write_io_port(port: str, value: str, width: int = 1) -> dict:
+    """
+    Write to one whitelisted VGA I/O port on the real, running DOSBox-X
+    instance via the native AI bridge. `port` and `value` are hex strings
+    (e.g. port "3CE", value "04"); `width` is the write size in bytes (1,
+    2, or 4) and defaults to 1. Only the standard VGA CRTC/Sequencer/
+    Graphics Controller/Attribute Controller/DAC/Misc Output/Feature
+    Control ports may be written -- any other port is rejected with
+    PORT_NOT_WRITABLE. Useful e.g. for switching the VGA read plane
+    (Graphics Controller index 4) while stopped at a breakpoint, which
+    memory.write cannot do since it only reaches guest RAM, not I/O space.
+    """
+
+    return _guarded_native(dosbox.write_io_port, port, value, width)
+
+
+@mcp.tool()
 def set_breakpoint(address: str) -> dict:
     """
     Set a breakpoint at a "SEG:OFF" address, on the real, running DOSBox-X

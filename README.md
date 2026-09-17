@@ -85,7 +85,7 @@ disassembly are backed by the native DOSBox-X debugger mechanisms.
 
 This section covers the bounded Phase 5C research surface specifically
 (used for this project's own controlled acceptance testing). For the
-general-purpose, unbounded 37-tool surface a normal agent should actually
+general-purpose, unbounded 38-tool surface a normal agent should actually
 connect to, see the [AI Agent Usage Guide](AGENT_GUIDE.md).
 
 The current bounded Phase 5C surface exposes 12 tools:
@@ -123,15 +123,15 @@ bridge, and must not change DOSBox-X state.
 Development has progressed through **Phase 7** (see [`CHANGELOG.md`](CHANGELOG.md)
 for the full, phase-by-phase history, in English and Traditional Chinese
 together). The general-purpose, unbounded MCP surface described in the
-[AI Agent Usage Guide](AGENT_GUIDE.md) -- 37 tools spanning debugger state,
-memory/registers, breakpoints (including byte-change memory watchpoints),
-execution control, keyboard/mouse input injection, frame capture, mouse
-capture and absolute positioning, input dispatch receipts, bounded execution
-tracing around a stop, and a DOS file I/O event log -- is the current,
-actively developed way to use this project. The bounded 12-tool Phase 5C
-surface described above under "Agent-visible tools" remains a separate,
-narrower research surface used only for this project's own controlled
-acceptance testing.
+[AI Agent Usage Guide](AGENT_GUIDE.md) -- 38 tools spanning debugger state,
+memory/registers/VGA I/O ports, breakpoints (including byte-change memory
+watchpoints), execution control, keyboard/mouse input injection, frame
+capture, mouse capture and absolute positioning, input dispatch receipts,
+bounded execution tracing around a stop, and a DOS file I/O event log -- is
+the current, actively developed way to use this project. The bounded
+12-tool Phase 5C surface described above under "Agent-visible tools" remains
+a separate, narrower research surface used only for this project's own
+controlled acceptance testing.
 
 ### Capabilities added since the Phase 5C audit
 
@@ -144,6 +144,7 @@ acceptance testing.
 | 7C | Input dispatch receipts, so an agent can confirm a keypress/click actually reached the emulator, not just that the RPC call returned |
 | 7D | A bounded execution trace (configurable before/after instructions) captured automatically around every debugger stop |
 | 7E | A DOS file I/O event log (`open`/`close`/`read`/`write`/`seek`) recording each call's real post-call result |
+| -- | `io.write`: whitelisted VGA I/O port writes (CRTC/Sequencer/Graphics Controller/Attribute Controller/DAC/Misc Output/Feature Control ports only), so an agent stopped at a breakpoint can e.g. switch the VGA read plane -- something `memory.write` cannot do, since it never reaches I/O space |
 
 Three native-bridge bugs found and fixed along the way, each documented in
 `CHANGELOG.md`: a Windows double-bind risk when two DOSBox-X instances listen
@@ -173,7 +174,7 @@ stopped state through `get_debug_status`.
 
 This result is preserved as a historical acceptance-audit snapshot rather than
 hidden or repeatedly rerun until a pass. It covers the bounded, 12-tool Phase
-5C surface specifically -- the current 37-tool general-purpose surface did not
+5C surface specifically -- the current 38-tool general-purpose surface did not
 exist yet at the time of this audit and has not itself been put through an
 equivalent formal acceptance process.
 

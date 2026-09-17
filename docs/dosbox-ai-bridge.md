@@ -122,6 +122,7 @@ functionality:
 | `code.disassemble`   | same as `code.current`, looped, advancing the offset by each instruction's decoded length (16-bit wraparound), mirroring the walking pattern already used by `debug.cpp`'s own `getcodetext()` |
 | `memory.write`       | `GetAddress()` + `mem_writeb_checked()` per byte (Phase 4A)      |
 | `register.write`     | direct assignment to the `reg_*` macro for a whitelisted register (Phase 4A) |
+| `io.write`            | `IO_WriteB()`/`IO_WriteW()`/`IO_WriteD()` (`inout.h`) for a whitelisted I/O port -- added so an agent stopped at a breakpoint can drive standard VGA registers (e.g. switch the Graphics Controller's Read Map Select register), which `memory.write` cannot reach since it only writes guest RAM, not I/O space |
 | `breakpoint.set`     | `CBreakpoint::IsBreakpoint()` (dedup check) + `CBreakpoint::AddBreakpoint()` (Phase 4B) |
 | `breakpoint.delete`  | `CBreakpoint::DeleteByIndex()` (Phase 4B)                        |
 | `breakpoint.list`    | `CBreakpoint::GetCount()`/`GetByIndex()` (new, Phase 4B) + existing `GetType()`/`GetSegment()`/`GetOffset()` |
@@ -170,6 +171,37 @@ the request's connection response slot and notifies its condition
 variable -- the only data that crosses back from the emulator thread to a
 socket thread is that one already-serialized JSON string, handed off
 through the mutex-protected slot.
+
+### I/O port write safety (io.write)
+
+`io.write` only accepts the ports in `WRITABLE_IO_PORTS` (`debug_ai.cpp`)
+-- the standard VGA CRTC (`0x3B4`/`0x3B5` mono, `0x3D4`/`0x3D5` color),
+Sequencer (`0x3C4`/`0x3C5`), Graphics Controller (`0x3CE`/`0x3CF`),
+Attribute Controller (`0x3C0`/`0x3C1`), DAC (`0x3C6`-`0x3C9`), Misc Output
+(`0x3C2`), and Feature Control (`0x3BA` mono, `0x3DA` color) ports --
+enforced on the socket thread, before the request is even queued: any
+other port is rejected with the dedicated `PORT_NOT_WRITABLE` error code,
+mirroring how `register.write` handles `REGISTER_NOT_WRITABLE` (Phase 4A,
+above). Unlike `register.write`, this is a single check (there is no
+"recognized but disallowed" middle case -- an unlisted port is simply not
+writable) and there is no second, emulator-thread-side re-check, since
+`ExecIoWrite()` only ever receives a port value the socket thread has
+already validated against the same array.
+
+Everything outside this whitelist -- PIC, PIT, disk controllers, sound
+hardware, and the rest of the port space -- is deliberately unreachable:
+an unrestricted `io.write` could desync or hang the guest OS in ways a
+debugger session has no way to recover from, so the whitelist is scoped
+to the read/write-safe VGA register ports an agent stopped at a
+breakpoint actually needs (e.g. writing `04` to the Graphics Controller's
+index port `0x3CE` then a plane number to its data port `0x3CF` to switch
+which plane `memory.read` observes at `A000:xxxx` -- something no
+existing bridge method could do, since `memory.write` only reaches guest
+RAM, never I/O space). `width` selects `IO_WriteB()`/`IO_WriteW()`/
+`IO_WriteD()` (1/2/4 bytes); the whitelist check only covers the base
+port, matching how these VGA registers are actually programmed (e.g. a
+2-byte write to `0x3CE` covers the `0x3CE`/`0x3CF` index/data pair, both
+already whitelisted).
 
 ### Breakpoint management (Phase 4B)
 
@@ -484,6 +516,9 @@ Newline-delimited JSON, exactly as specified in Phase3.md section 8:
 
 --> {"id": 12, "method": "execution.step_over"}
 <-- {"id": 12, "ok": true, "result": {"stopped":true,"running":false,"location":{...},"instruction":{...},"registers":{...},"segments":{...},"flags":{...}}}
+
+--> {"id": 13, "method": "io.write", "params": {"port": "3CE", "value": "04", "width": 1}}
+<-- {"id": 13, "ok": true, "result": {"port":"03CE","value":"04","width":1}}
 ```
 
 `execution.continue`/`execution.pause`/`execution.step_into`/`execution.step_over`
@@ -499,14 +534,19 @@ real, post-pause debugger state, not an acknowledgement.
 
 `memory.write`'s `params.data` array elements may be JSON numbers or
 2-digit hex strings (mixing both in one array is fine); `register.write`'s
-`params.value` must be a 1-8 digit hex string; `breakpoint.set`'s `id`
+`params.value` must be a 1-8 digit hex string; `io.write`'s `params.port`
+must be a 1-4 digit hex string naming a whitelisted VGA port (see "I/O
+port write safety" above), `params.value` must be a hex string of at most
+`2 * width` digits, and `params.width` is an optional 1/2/4 (bytes,
+defaulting to 1); `breakpoint.set`'s `id`
 result and `breakpoint.delete`'s `params.id` are positions in DOSBox-X's
 own breakpoint list -- see "Breakpoint management" above for why these
 shift when breakpoints are added/removed.
 
 Error codes implemented: `INVALID_JSON`, `INVALID_REQUEST`,
 `UNKNOWN_METHOD`, `INVALID_PARAMETER`, `DEBUGGER_NOT_STOPPED`,
-`MEMORY_ERROR`, `REGISTER_NOT_WRITABLE` (Phase 4A), `INVALID_ADDRESS`,
+`MEMORY_ERROR`, `REGISTER_NOT_WRITABLE` (Phase 4A), `PORT_NOT_WRITABLE`
+(`io.write`), `INVALID_ADDRESS`,
 `BREAKPOINT_NOT_FOUND`, `BREAKPOINT_ALREADY_EXISTS` (Phase 4B),
 `ALREADY_RUNNING`, `ALREADY_STOPPED`, `EXECUTION_TIMEOUT` (Phase 4C -- and,
 as of Phase 4D, also returned by `execution.step_over` when its async
@@ -545,6 +585,9 @@ Implemented, read-only (Phase 3B): `debug.status`, `cpu.get`,
 Implemented, write (Phase 4A): `memory.write` (any address/length within
 the same bounds as `memory.read`), `register.write` (whitelisted GPRs
 only -- see "Register write safety" above).
+
+Implemented, I/O port write: `io.write` (whitelisted VGA ports only --
+see "I/O port write safety" above).
 
 Implemented, breakpoints (Phase 4B): `breakpoint.set`, `breakpoint.delete`,
 `breakpoint.list` -- physical (address) breakpoints only, against
@@ -719,6 +762,22 @@ stop condition.
   cannot be trusted as a verification artifact; a `Clean` + full rebuild is
   required before any live verification session, and this phase's own
   "Build & runtime verification" results below are from such a clean build.
+* (Open question / potential future work) `AI_BRIDGE_PORT` (`debug_ai.cpp`)
+  is a hardcoded `127.0.0.1:9876`, so only one `dosbox-x.exe` process on a
+  machine can have an active AI bridge at a time -- a second instance's
+  `bind()` fails and that instance silently runs as a normal, agent-less
+  DOSBox-X (see the `SO_REUSEADDR` comment just above `DEBUG_AI_Init()`).
+  Even within a single bridge instance, `AcceptThreadFunc()` does accept
+  multiple simultaneous TCP connections, but all connected clients drive
+  the *same* shared CPU/memory/breakpoint/pause state with no per-connection
+  isolation or locking -- concurrent commands from two different clients
+  (e.g. one pausing while another steps) can race and interfere with each
+  other. Practical effect: two agents/projects cannot each drive their own
+  independent DOSBox-X debugging session at the same time under the current
+  design. Making this "multi-instance capable" (e.g. a configurable port
+  per `dosbox-x.exe` instance, and/or per-connection session isolation on
+  the bridge side) has been raised as something to evaluate, but no design
+  or implementation exists yet.
 
 ## Build & runtime verification
 
@@ -943,3 +1002,35 @@ step_over-skips-the-call and step_into-enters-the-call scenarios each be
 demonstrated once, using real, distinct code paths, without needing to
 revisit any address a COM program's inherently linear, run-once control
 flow can't return to.
+
+**`io.write`** (VGA I/O port write, added after Phase 7E -- see "I/O port
+write safety" above): rebuilt just `dosbox-x.vcxproj` (Visual Studio "18",
+`PlatformToolset` overridden to `v145` on the command line, same as Phase
+4C/4D) -- 0 errors; relaunched `dosbox-x.exe -defaultdir` and let it boot
+normally to the `COMMAND.COM` prompt, `127.0.0.1:9876 LISTENING`
+reconfirmed. A real MCP-layer session (`DOSBoxClient.write_io_port()`)
+confirmed: writing a non-whitelisted port (`0060`, the keyboard
+controller) is rejected with `PORT_NOT_WRITABLE` before it ever reaches
+`IO_WriteB()`; both 1-byte and 2-byte (combined index+data) writes to
+`3CE`/`3CF` succeed and echo the correct port/value/width. The read-plane
+switch itself -- the scenario that motivated this feature -- was verified
+against genuinely live VGA hardware state, not just a protocol-level echo:
+with the debugger paused, `write_io_port()` selected write plane 0
+(Sequencer Map Mask `3C4`/`3C5`) and `write_memory()` wrote `AA` to
+`A000:0000`, then plane 2 was selected the same way and `write_memory()`
+wrote `55` to the same address; switching the *read* plane via GC Read Map
+Select (`3CE`/`3CF` index 4) and reading `A000:0000` back with
+`read_memory()` returned `AA` on plane 0, `55` on plane 2, and the
+pre-existing (untouched) bytes on planes 1/3 -- the same one physical CPU
+address genuinely resolving to four independent bytes depending only on
+which plane `io.write` had most recently selected. (Getting this
+end-to-end scenario to actually exercise the planar VGA memory handler
+also required disabling Chain4/Odd-Even addressing via Sequencer index 4
+and forcing GC Miscellaneous's Memory Map Select to the A0000-BFFFF
+window via GC index 6 -- both also `io.write` calls, and both already
+covered by `WRITABLE_IO_PORTS` since the whitelist is by port, not by
+GC/Sequencer index -- not a limitation of `io.write` itself, just what
+real VGA planar access requires, matching DOSBox-X's own INT 10h font
+routines (`CopyRowMask`, `src/ints/int10_char.cpp`), which use the exact
+same GC index 4/5 sequence.) All registers were restored to their
+original values afterward and `execution.continue` resumed the guest.

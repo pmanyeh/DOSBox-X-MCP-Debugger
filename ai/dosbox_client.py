@@ -76,6 +76,15 @@ class DOSBoxRegisterNotWritable(DOSBoxClientError):
     code = "REGISTER_NOT_WRITABLE"
 
 
+class DOSBoxPortNotWritable(DOSBoxClientError):
+    """The requested I/O port is not in the io.write whitelist (see native
+    error code PORT_NOT_WRITABLE). Only the standard VGA CRTC/Sequencer/
+    Graphics Controller/Attribute Controller/DAC/Misc Output/Feature
+    Control ports are writable -- see WRITABLE_IO_PORTS in debug_ai.cpp."""
+
+    code = "PORT_NOT_WRITABLE"
+
+
 class DOSBoxBreakpointNotFound(DOSBoxClientError):
     """No breakpoint exists with the given id (see native error code
     BREAKPOINT_NOT_FOUND). Breakpoint ids are positions in DOSBox-X's own
@@ -190,6 +199,7 @@ _NATIVE_ERROR_MAP = {
     "DEBUGGER_NOT_STOPPED": DOSBoxDebuggerNotStopped,
     "MEMORY_ERROR": DOSBoxMemoryError,
     "REGISTER_NOT_WRITABLE": DOSBoxRegisterNotWritable,
+    "PORT_NOT_WRITABLE": DOSBoxPortNotWritable,
     "BREAKPOINT_NOT_FOUND": DOSBoxBreakpointNotFound,
     "BREAKPOINT_ALREADY_EXISTS": DOSBoxBreakpointAlreadyExists,
     "ALREADY_RUNNING": DOSBoxAlreadyRunning,
@@ -354,6 +364,38 @@ class DOSBoxClient:
             raise TypeError(f"register value must be int or str, got {type(value).__name__}")
 
         return self.request("register.write", {"register": register, "value": value_str})
+
+    def write_io_port(self, port, value, width: int = 1) -> dict:
+        """Write to one whitelisted VGA I/O port (CRTC/Sequencer/Graphics
+        Controller/Attribute Controller/DAC/Misc Output/Feature Control --
+        see WRITABLE_IO_PORTS in debug_ai.cpp; any other port is rejected
+        by the native bridge with DOSBoxPortNotWritable). `port` and
+        `value` may each be an int or a hex string; `width` is the write
+        size in bytes (1, 2, or 4) and defaults to a single byte."""
+
+        if width not in (1, 2, 4):
+            raise ValueError(f"width must be 1, 2, or 4, got {width!r}")
+        max_value = (1 << (width * 8)) - 1
+
+        if isinstance(port, int):
+            if not (0 <= port <= 0xFFFF):
+                raise ValueError(f"port out of 16-bit range: {port!r}")
+            port_str = f"{port:04X}"
+        elif isinstance(port, str):
+            port_str = port
+        else:
+            raise TypeError(f"port must be int or str, got {type(port).__name__}")
+
+        if isinstance(value, int):
+            if not (0 <= value <= max_value):
+                raise ValueError(f"value out of {width}-byte range: {value!r}")
+            value_str = f"{value:0{width * 2}X}"
+        elif isinstance(value, str):
+            value_str = value
+        else:
+            raise TypeError(f"value must be int or str, got {type(value).__name__}")
+
+        return self.request("io.write", {"port": port_str, "value": value_str, "width": width})
 
     def set_breakpoint(self, address: str) -> dict:
         """Set a breakpoint at a "SEG:OFF" address, using DOSBox-X's own

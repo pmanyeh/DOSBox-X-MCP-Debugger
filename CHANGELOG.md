@@ -12,6 +12,75 @@ English and Traditional Chinese together.
 
 ---
 
+## New capability — `io.write`, whitelisted VGA I/O port writes (2026-09-17)
+
+**English**
+
+- Added `io.write` to the native AI bridge (`debug_ai.cpp`) and a
+  matching `write_io_port` MCP tool, so an agent can write directly to
+  VGA I/O ports while stopped at a breakpoint -- something no existing
+  bridge method could do, since `memory.write` only reaches guest RAM,
+  never I/O space. This closes a concrete gap raised during debugging: an
+  agent stopped at a breakpoint had no way to safely switch the VGA read
+  plane, because doing so requires writing the Graphics Controller's
+  Read Map Select register (I/O port `3CE`/`3CF`), not guest memory.
+- Scoped to a deliberate allowlist (`WRITABLE_IO_PORTS`, debug_ai.cpp)
+  rather than an unrestricted port write: only the standard VGA
+  CRTC/Sequencer/Graphics Controller/Attribute Controller/DAC/Misc
+  Output/Feature Control ports are writable. An unrestricted `io.write`
+  could reach PIC/PIT/disk-controller ports and desync or hang the guest
+  OS in ways a debugger session has no way to recover from; any
+  non-whitelisted port is rejected with a dedicated `PORT_NOT_WRITABLE`
+  error code, mirroring how `register.write` (Phase 4A) already handles
+  `REGISTER_NOT_WRITABLE`. See "I/O port write safety" in
+  `docs/dosbox-ai-bridge.md` for the full port list and rationale.
+- Verified against a live, running `dosbox-x.exe` (rebuilt
+  `dosbox-x.vcxproj`, 0 errors): a non-whitelisted port (`0060`, the
+  keyboard controller) is correctly rejected before it ever reaches
+  `IO_WriteB()`; both 1-byte and 2-byte (combined index+data) writes
+  succeed. The motivating read-plane scenario itself was verified against
+  genuinely live VGA hardware state, not just a protocol-level echo:
+  `write_io_port()` selected write plane 0 via the Sequencer's Map Mask
+  register and wrote `AA` to `A000:0000`, then selected write plane 2 the
+  same way and wrote `55` to the same address; switching the *read*
+  plane via the Graphics Controller's Read Map Select register and
+  reading `A000:0000` back returned `AA` on plane 0, `55` on plane 2, and
+  the pre-existing bytes on the untouched planes 1/3 -- the same one CPU
+  address genuinely resolving to four independent bytes depending only on
+  which plane had most recently been selected through `io.write`.
+
+**繁體中文**
+
+- 在原生 AI bridge（`debug_ai.cpp`）新增 `io.write`，並對應加上
+  `write_io_port` 這個 MCP 工具，讓 agent 能在 breakpoint 停住時直接寫
+  VGA I/O port——這是現有 bridge 方法都做不到的，因為 `memory.write`
+  只能碰到 guest RAM，碰不到 I/O space。這解決了除錯過程中發現的一個具
+  體缺口：agent 停在 breakpoint 時沒辦法安全切換 VGA read plane，因為
+  要做到這件事必須寫 Graphics Controller 的 Read Map Select 暫存器
+  （I/O port `3CE`/`3CF`），而不是寫 guest 記憶體。
+- 刻意限縮在白名單（`WRITABLE_IO_PORTS`，debug_ai.cpp）內，而不是開放
+  任意 port 寫入：只有標準 VGA CRTC／Sequencer／Graphics Controller／
+  Attribute Controller／DAC／Misc Output／Feature Control 的 port 可寫。
+  不受限的 `io.write` 有可能寫到 PIC／PIT／磁碟控制器等 port，讓 guest
+  OS 失步或當掉，而且除錯 session 完全沒辦法救回來；任何不在白名單內的
+  port 一律以專屬的 `PORT_NOT_WRITABLE` 錯誤碼拒絕，做法比照
+  `register.write`（Phase 4A）既有的 `REGISTER_NOT_WRITABLE`。完整的
+  port 清單與理由見 `docs/dosbox-ai-bridge.md` 的「I/O port write
+  safety」一節。
+- 已對著真正在跑的 `dosbox-x.exe` 驗證（重建 `dosbox-x.vcxproj`，0 錯
+  誤）：寫不在白名單內的 port（`0060`，鍵盤控制器）會在碰到
+  `IO_WriteB()` 之前就被正確拒絕；1 byte 與 2 byte（index+data 合併寫
+  入）都能成功。而最初促成這個功能的 read plane 情境，也是對著真正的
+  VGA 硬體狀態驗證，不只是協定層的 echo：`write_io_port()` 先透過
+  Sequencer 的 Map Mask 暫存器選到 write plane 0，寫入 `AA` 到
+  `A000:0000`；再用同樣方式選到 write plane 2，把 `55` 寫到同一個位址；
+  接著透過 Graphics Controller 的 Read Map Select 暫存器切換 *read*
+  plane 後讀回 `A000:0000`，plane 0 讀到 `AA`、plane 2 讀到 `55`，未
+  動過的 plane 1/3 則維持原本的內容——同一個 CPU 位址，確實會依照
+  `io.write` 最後選到的 plane 而解析出四種不同的獨立位元組。
+
+---
+
 ## Bridge fix — `-defaultdir` swallowing the next command-line switch (2026-08-17)
 
 **English**

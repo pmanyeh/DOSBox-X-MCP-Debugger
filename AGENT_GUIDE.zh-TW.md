@@ -139,7 +139,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 }
 ```
 
-`ai/server.py` 是不受限、通用的工具介面（共 37 個工具，詳見下方），也是
+`ai/server.py` 是不受限、通用的工具介面（共 38 個工具，詳見下方），也是
 一般 agent 使用時應該連線的對象。另外還有兩個 MCP 進入點，用途較為特定、
 較窄，**多數 agent 不應該**連線到它們：
 
@@ -160,7 +160,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 
 ## 可用工具
 
-共 37 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
+共 38 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
 狀態下呼叫，會得到明確的錯誤（見〈[錯誤代碼](#錯誤代碼)〉），而不是卡住或
 悄悄地什麼都不做。
 
@@ -192,6 +192,12 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 | 工具 | 參數 | 回傳 | 前置條件 |
 |---|---|---|---|
 | `write_register` | `register: str`、`value: 十六進位字串` | 寫入確認 | 除錯器已停止；`register` 必須是 `eax/ebx/ecx/edx/esi/edi/ebp` 其中之一——EIP、區段暫存器、ESP、EFLAGS 一律會被拒絕（`REGISTER_NOT_WRITABLE`），以避免執行狀態失步 |
+
+### I/O port
+
+| 工具 | 參數 | 回傳 | 前置條件 |
+|---|---|---|---|
+| `write_io_port` | `port: 十六進位字串`、`value: 十六進位字串`、`width: int`（1/2/4 位元組，預設 1） | 寫入確認 | 除錯器已停止；`port` 必須是白名單內的 VGA CRTC/Sequencer/Graphics Controller/Attribute Controller/DAC/Misc Output/Feature Control port 之一，其餘一律會被拒絕（`PORT_NOT_WRITABLE`）。例如在 breakpoint 停住時，先寫 `04` 到 Graphics Controller 的 index port `3CE`，再把 plane 編號寫到 data port `3CF`，即可切換 VGA read plane——這是 `write_memory` 做不到的，因為它只能寫 guest RAM，碰不到 I/O space |
 
 ### 中斷點
 
