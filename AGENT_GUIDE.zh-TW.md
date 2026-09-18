@@ -139,7 +139,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 }
 ```
 
-`ai/server.py` 是不受限、通用的工具介面（共 38 個工具，詳見下方），也是
+`ai/server.py` 是不受限、通用的工具介面（共 39 個工具，詳見下方），也是
 一般 agent 使用時應該連線的對象。另外還有兩個 MCP 進入點，用途較為特定、
 較窄，**多數 agent 不應該**連線到它們：
 
@@ -160,7 +160,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 
 ## 可用工具
 
-共 38 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
+共 39 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
 狀態下呼叫，會得到明確的錯誤（見〈[錯誤代碼](#錯誤代碼)〉），而不是卡住或
 悄悄地什麼都不做。
 
@@ -198,6 +198,14 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 | 工具 | 參數 | 回傳 | 前置條件 |
 |---|---|---|---|
 | `write_io_port` | `port: 十六進位字串`、`value: 十六進位字串`、`width: int`（1/2/4 位元組，預設 1） | 寫入確認 | 除錯器已停止；`port` 必須是白名單內的 VGA CRTC/Sequencer/Graphics Controller/Attribute Controller/DAC/Misc Output/Feature Control port 之一，其餘一律會被拒絕（`PORT_NOT_WRITABLE`）。例如在 breakpoint 停住時，先寫 `04` 到 Graphics Controller 的 index port `3CE`，再把 plane 編號寫到 data port `3CF`，即可切換 VGA read plane——這是 `write_memory` 做不到的，因為它只能寫 guest RAM，碰不到 I/O space |
+
+### VGA VRAM 快照
+
+| 工具 | 參數 | 回傳 | 前置條件 |
+|---|---|---|---|
+| `vga_snapshot` | `regions: [{"plane": 0-3, "offset": 十六進位字串, "length": int}, ...]` | `{"layout", "plane_size_bytes", "latch", "registers": {"sequencer", "graphics_controller", "crtc"}, "regions": [{"plane", "offset", "requested_length", "returned_length", "bytes_base64"}, ...]}` | 除錯器已停止；僅限 EGA/VGA 家族機型（其餘機型會回傳 `VGA_SNAPSHOT_UNSUPPORTED`） |
+
+直接讀取原始 VRAM，完全不經過 CPU 的 `A000:xxxx` 讀取路徑——與 `read_memory` 不同，這個工具本身不會改動 VGA latch（在 GC read-mode-0 下，任何 CPU 可見的位元組讀取都會把 latch 當成真實硬體的副作用去更新），也不需要事先切換 read plane（`write_io_port` 寫 `3CE`/`3CF`）：四個 plane、latch，以及 Sequencer／Graphics Controller／CRTC 的暫存器組，都是同一個時間點、同一次呼叫回傳的，跟最後選到哪個 plane 完全無關。這正是用來回答「畫面究竟是 guest 自己清掉的，還是診斷動作本身造成的」這類問題的工具——例如在 Mode X 程式裡讀取四個 plane 畫面最下方的位元組，完全不用去動 read-plane 暫存器（否則後續的寫入操作可能就依賴著它）。記憶體布局（`offset` 是每個 plane 內部的位元組偏移，不需乘以 4）與完整設計理由見 `docs/phase8a-vga-snapshot-design.md`。
 
 ### 中斷點
 

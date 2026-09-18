@@ -85,6 +85,15 @@ class DOSBoxPortNotWritable(DOSBoxClientError):
     code = "PORT_NOT_WRITABLE"
 
 
+class DOSBoxVgaSnapshotUnsupported(DOSBoxClientError):
+    """vga.snapshot requires an EGA/VGA-family machine (see native error
+    code VGA_SNAPSHOT_UNSUPPORTED) -- the current machine's video memory is
+    not laid out as 4-plane interleaved VRAM (CGA/Hercules/Tandy/PCjr/
+    PC-98 all use a different layout this tool does not support)."""
+
+    code = "VGA_SNAPSHOT_UNSUPPORTED"
+
+
 class DOSBoxBreakpointNotFound(DOSBoxClientError):
     """No breakpoint exists with the given id (see native error code
     BREAKPOINT_NOT_FOUND). Breakpoint ids are positions in DOSBox-X's own
@@ -200,6 +209,7 @@ _NATIVE_ERROR_MAP = {
     "MEMORY_ERROR": DOSBoxMemoryError,
     "REGISTER_NOT_WRITABLE": DOSBoxRegisterNotWritable,
     "PORT_NOT_WRITABLE": DOSBoxPortNotWritable,
+    "VGA_SNAPSHOT_UNSUPPORTED": DOSBoxVgaSnapshotUnsupported,
     "BREAKPOINT_NOT_FOUND": DOSBoxBreakpointNotFound,
     "BREAKPOINT_ALREADY_EXISTS": DOSBoxBreakpointAlreadyExists,
     "ALREADY_RUNNING": DOSBoxAlreadyRunning,
@@ -396,6 +406,51 @@ class DOSBoxClient:
             raise TypeError(f"value must be int or str, got {type(value).__name__}")
 
         return self.request("io.write", {"port": port_str, "value": value_str, "width": width})
+
+    def snapshot_vga(self, regions: list) -> dict:
+        """Read raw VGA VRAM -- one or more (plane, offset, length)
+        regions, plus the VGA latch and the Sequencer/Graphics Controller/
+        CRTC register files -- in one atomic snapshot, entirely bypassing
+        the CPU's A000:xxxx read path (see docs/phase8a-vga-snapshot-design.md).
+
+        Unlike memory.read, this never touches vga.latch as a side effect
+        and never requires switching the GC's read plane first -- all four
+        planes are visible in one call regardless of which plane
+        write_io_port most recently selected. Only valid on an EGA/VGA-
+        family machine (raises DOSBoxVgaSnapshotUnsupported otherwise).
+
+        `regions` is a list of dicts, each ``{"plane": 0-3, "offset":
+        <int or hex str, per-plane byte offset>, "length": <int, bytes>}``.
+        The response's ``regions[]`` entries include ``returned_length``,
+        which can be less than the requested length (never more) if the
+        region ran past ``plane_size_bytes`` -- never an error by itself."""
+
+        if not regions:
+            raise ValueError("regions must be a non-empty list")
+
+        params_regions = []
+        for r in regions:
+            plane = r["plane"]
+            if not isinstance(plane, int) or not (0 <= plane <= 3):
+                raise ValueError(f"plane must be an int 0-3, got {plane!r}")
+
+            offset = r["offset"]
+            if isinstance(offset, int):
+                if offset < 0:
+                    raise ValueError(f"offset must be non-negative: {offset!r}")
+                offset_str = f"{offset:X}"
+            elif isinstance(offset, str):
+                offset_str = offset
+            else:
+                raise TypeError(f"offset must be int or str, got {type(offset).__name__}")
+
+            length = r["length"]
+            if not isinstance(length, int) or length <= 0:
+                raise ValueError(f"length must be a positive int, got {length!r}")
+
+            params_regions.append({"plane": plane, "offset": offset_str, "length": length})
+
+        return self.request("vga.snapshot", {"regions": params_regions})
 
     def set_breakpoint(self, address: str) -> dict:
         """Set a breakpoint at a "SEG:OFF" address, using DOSBox-X's own

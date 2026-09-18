@@ -150,7 +150,7 @@ Example MCP server config (adjust paths to your clone location):
 }
 ```
 
-`ai/server.py` is the unbounded, general-purpose tool surface (38 tools,
+`ai/server.py` is the unbounded, general-purpose tool surface (39 tools,
 listed below) and is the one intended for normal agent use. Two other MCP
 entry points exist for specific, narrower purposes and are **not** what
 most agents should connect to:
@@ -173,7 +173,7 @@ rather than a `DOSBOX_NOT_CONNECTED` error.
 
 ## Available tools
 
-38 tools, grouped by what they do. "Precondition" is the debugger state a
+39 tools, grouped by what they do. "Precondition" is the debugger state a
 call requires; calling it in the wrong state returns a specific error
 (see [Error codes](#error-codes)) rather than blocking or silently doing
 nothing.
@@ -212,6 +212,14 @@ nothing.
 | Tool | Parameters | Returns | Precondition |
 |---|---|---|---|
 | `write_io_port` | `port: hex string`, `value: hex string`, `width: int` (1/2/4 bytes, default 1) | write confirmation | debugger stopped; `port` must be one of the whitelisted VGA CRTC/Sequencer/Graphics Controller/Attribute Controller/DAC/Misc Output/Feature Control ports -- any other port is rejected (`PORT_NOT_WRITABLE`). Useful e.g. for switching the VGA read plane (write `04` to Graphics Controller index port `3CE`, then the plane number to data port `3CF`) while stopped at a breakpoint -- `write_memory` cannot reach I/O space |
+
+### VGA VRAM snapshot
+
+| Tool | Parameters | Returns | Precondition |
+|---|---|---|---|
+| `vga_snapshot` | `regions: [{"plane": 0-3, "offset": hex string, "length": int}, ...]` | `{"layout", "plane_size_bytes", "latch", "registers": {"sequencer", "graphics_controller", "crtc"}, "regions": [{"plane", "offset", "requested_length", "returned_length", "bytes_base64"}, ...]}` | debugger stopped; EGA/VGA-family machine only (`VGA_SNAPSHOT_UNSUPPORTED` otherwise) |
+
+Reads raw VRAM directly, bypassing the CPU's `A000:xxxx` read path entirely -- unlike `read_memory`, this cannot itself mutate the VGA latch (a real hardware side effect of any CPU-visible byte read in GC read-mode-0) and never requires switching the read plane first (`write_io_port` to `3CE`/`3CF`): all four planes, the latch, and the Sequencer/Graphics Controller/CRTC register files come back from one consistent instant, in one call, regardless of which plane was most recently selected. This is the tool for "did the guest actually clear this, or did diagnosing it change something" questions -- e.g. reading all four planes' bottom-of-screen bytes in a Mode X program without ever touching the read-plane register that a follow-up write might have depended on. See `docs/phase8a-vga-snapshot-design.md` for the plane-interleaved memory layout (`offset` is a per-plane byte offset, not multiplied by 4) and full design rationale.
 
 ### Breakpoints
 

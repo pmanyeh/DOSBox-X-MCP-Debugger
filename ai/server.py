@@ -149,6 +149,42 @@ def write_io_port(port: str, value: str, width: int = 1) -> dict:
 
 
 @mcp.tool()
+def vga_snapshot(regions: list) -> dict:
+    """
+    Read raw VGA VRAM directly -- one or more (plane, offset, length)
+    regions, plus the VGA latch and the Sequencer/Graphics Controller/CRTC
+    register files -- in one atomic snapshot from the real, running
+    DOSBox-X instance, via the native AI bridge. Only valid while the
+    debugger is stopped (like every other memory/register tool here).
+
+    Unlike read_memory, this never goes through the CPU's A000:xxxx read
+    path, so it cannot itself change the VGA latch, any VGA register, CPU
+    state, guest memory, or execution position, and it never requires
+    switching the VGA read plane first (write_io_port to 3CE/3CF) -- all
+    four planes are visible in the same call regardless of which plane was
+    last selected. This is exactly what makes it safe for diagnosing
+    whether something else (not the diagnostic call itself) changed the
+    screen.
+
+    `regions` is a list of dicts, each {"plane": 0-3, "offset": <int or hex
+    string, a per-plane byte offset -- NOT multiplied by 4>, "length": <int,
+    bytes to read from that plane>}. The response's plane_size_bytes tells
+    you each plane's real size; a region's returned_length can be less than
+    its requested length (never more, never an error) if offset+length ran
+    past that. Only EGA/VGA-family machines are supported -- any other
+    machine type is rejected with VGA_SNAPSHOT_UNSUPPORTED, since their
+    video memory is not laid out as 4-plane interleaved VRAM.
+
+    Example: to read the bottom 30 lines of two Mode X pages (each plane's
+    byte offsets 0x3520/0x7520, 2,400 bytes) across all four planes in one
+    call: regions=[{"plane": p, "offset": off, "length": 2400}
+    for p in range(4) for off in ("3520", "7520")].
+    """
+
+    return _guarded_native(dosbox.snapshot_vga, regions)
+
+
+@mcp.tool()
 def set_breakpoint(address: str) -> dict:
     """
     Set a breakpoint at a "SEG:OFF" address, on the real, running DOSBox-X

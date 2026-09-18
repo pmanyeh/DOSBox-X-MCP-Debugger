@@ -12,6 +12,122 @@ English and Traditional Chinese together.
 
 ---
 
+## Phase 8A — `vga.snapshot`, a side-effect-free VGA VRAM read (2026-09-18)
+
+**English**
+
+- Added `vga.snapshot` to the native AI bridge (`debug_ai.cpp`) and a
+  matching `vga_snapshot` MCP tool, directly answering client feedback on
+  the Mode X "bottom 30 lines get cleared, owned path doesn't repaint"
+  investigation: the most-needed missing piece was a VRAM read that
+  cannot itself change the guest state being diagnosed. `vga.snapshot`
+  reads one or more (plane, offset, length) regions, the VGA latch, and
+  the Sequencer/Graphics Controller/CRTC register files, all from one
+  consistent instant, entirely bypassing the CPU's `A000:xxxx` read path
+  (`mem_readb_checked`/any `PageHandler`) that `read_memory` uses. That
+  distinction matters because a normal CPU-visible byte read at
+  `A000:xxxx` has a genuine hardware side effect in GC read-mode 0: it
+  latches all four planes into `vga.latch` -- so a diagnostic
+  `read_memory` call could silently corrupt the very latch state a Mode X
+  `write_mode 1` operation depends on if the guest resumes afterward.
+  `vga.snapshot` instead reads `vga.mem.linear`/`vga.latch.d`/
+  `vga.seq`/`vga.gfx`/`vga.crtc` directly as plain field reads, so it
+  cannot mutate the latch, any VGA register, CPU state, guest memory, or
+  execution position, and never needs the read plane switched first
+  (`write_io_port` to `3CE`/`3CF`) -- all four planes come back from the
+  same call regardless of which plane was last selected.
+- Reuses the same plane-interleaved-dword VRAM layout every EGA/VGA-family
+  card's planar memory already has (`vga.mem.linear[offset*4 + plane]`,
+  confirmed against the two actual planar read/write call sites in
+  `vga_memory.cpp`) -- a physical memory-bus property independent of the
+  current video mode, so no per-mode special-casing was needed. Gated on
+  `IS_EGAVGA_ARCH`; any other machine type (CGA/Hercules/Tandy/PCjr/PC-98,
+  whose VRAM is laid out differently) is rejected with a dedicated
+  `VGA_SNAPSHOT_UNSUPPORTED` error rather than returning meaningless
+  bytes. Reuses the existing `g_requestQueue`/`DEBUG_AI_Poll()` mechanism
+  (like `memory.read`/`io.write`), so it can only ever execute while the
+  debugger is genuinely stopped -- the CPU cannot run between reading
+  plane 0 and plane 3, or between the latch and the register dump.
+- See `docs/phase8a-vga-snapshot-design.md` for the full design (request/
+  response shape, the plane-interleaved memory layout, and why the
+  request must be answered only while stopped) and `AGENT_GUIDE.md`/
+  `.zh-TW.md` for the tool reference (39 tools total).
+- Deliberately does not implement `vga.watch_writes` (a real VRAM-write
+  breakpoint keyed on plane+offset, requested as the client's Priority 2)
+  -- the client's own feedback says Priority 1 alone is sufficient to
+  substantially unblock the current diagnosis without needing Priority 2
+  first, so it is tracked as a follow-up phase (8B) rather than built now.
+- Verified against a live, running `dosbox-x.exe` (rebuilt
+  `dosbox-x.vcxproj`, 0 errors, `-break-start drive_c\STEP.COM`): calling
+  `vga.snapshot` twice in a row while stopped returned bit-for-bit
+  identical `latch`/register values both times, `continue_execution`
+  afterward behaved normally, and the debugger's own `location` was
+  unchanged across both calls -- confirming the call has zero observable
+  side effect on guest/debugger state. The client's own motivating region
+  shapes (bottom 30 lines of two Mode X pages, offsets `0x3520`/`0x7520`,
+  2,400 bytes each, all four planes; plus both full pages at
+  `0x0000`/`0x4000`, 16,000 bytes each -- 16 regions in one call) came
+  back with the correct `returned_length` for each, and a deliberately
+  overrunning region correctly clamped (`returned_length` < requested,
+  never an error). `STEP.COM` is this project's own minimal test binary,
+  stopped at its entry point in default text mode, not the client's own
+  Mode X game -- the actual "does the on-screen picture stay identical
+  around a real Mode X repaint" comparison from the design doc's
+  verification plan still needs to be run against that game directly.
+
+**繁體中文**
+
+- 在原生 AI bridge（`debug_ai.cpp`）新增 `vga.snapshot`，並對應加上
+  `vga_snapshot` 這個 MCP 工具，直接回應客戶對 Mode X「畫面最下方 30 列
+  被清掉、owned 路徑沒有同步重繪」這個調查案的回饋：目前最缺的一塊，就
+  是一個「診斷本身不會改變 guest 狀態」的 VRAM 讀取方式。`vga.snapshot`
+  會在同一個一致的時間點，讀取一或多個 (plane、offset、length) 區段、
+  VGA latch，以及 Sequencer／Graphics Controller／CRTC 的暫存器組，完全
+  繞過 `read_memory` 所使用的 CPU `A000:xxxx` 讀取路徑
+  （`mem_readb_checked`／任何 `PageHandler`）。這個區別很關鍵：在 GC
+  read-mode 0 底下，一般 CPU 可見的 `A000:xxxx` 位元組讀取本身就有真實
+  硬體副作用——會把四個 plane 都鎖進 `vga.latch`——所以一次診斷性質的
+  `read_memory` 呼叫，可能就悄悄破壞了 Mode X `write_mode 1` 操作在
+  guest 繼續執行後所依賴的 latch 狀態。`vga.snapshot` 改成直接讀取
+  `vga.mem.linear`／`vga.latch.d`／`vga.seq`／`vga.gfx`／`vga.crtc` 這些
+  純欄位，因此不可能改動 latch、任何 VGA 暫存器、CPU 狀態、guest 記憶體
+  或執行位置，也完全不需要事先切換 read plane（`write_io_port` 寫
+  `3CE`/`3CF`）——不管最後選到哪個 plane，四個 plane 都會在同一次呼叫中
+  回傳。
+- 沿用每一張 EGA/VGA 家族顯示卡 planar 記憶體本來就有的「四個 plane 交錯
+  存放」布局（`vga.mem.linear[offset*4 + plane]`，已對照 `vga_memory.cpp`
+  中兩個實際的 planar 讀寫呼叫點確認過）——這是記憶體匯流排本身的物理
+  特性，與目前的顯示模式無關，因此不需要針對個別模式另外處理。以
+  `IS_EGAVGA_ARCH` 做為前提條件；其餘機型（CGA／Hercules／Tandy／PCjr／
+  PC-98，其 VRAM 布局完全不同）一律以專屬的 `VGA_SNAPSHOT_UNSUPPORTED`
+  錯誤拒絕，而不是回傳沒有意義的位元組。沿用既有的
+  `g_requestQueue`/`DEBUG_AI_Poll()` 機制（與 `memory.read`／`io.write`
+  相同），因此永遠只會在除錯器真正停止時才會執行——CPU 不可能在讀取
+  plane 0 與 plane 3 之間、或是在讀 latch 與讀暫存器之間跑動。
+- 完整設計（請求／回應格式、plane 交錯記憶體布局，以及為何必須只在
+  停止時回應）請見 `docs/phase8a-vga-snapshot-design.md`；工具參考則在
+  `AGENT_GUIDE.md`/`.zh-TW.md`（共 39 個工具）。
+- 刻意沒有實作 `vga.watch_writes`（依 plane+offset 監看真正 VRAM 寫入的
+  breakpoint，也就是客戶回饋中的優先順序二）——客戶自己的回饋已經說明，
+  光是優先順序一就足以大幅改善目前的診斷，不需要先做優先順序二，因此
+  這裡先不實作，列為後續 Phase（8B）的追蹤項目。
+- 已對著真正在跑的 `dosbox-x.exe` 驗證（重建 `dosbox-x.vcxproj`，0 錯
+  誤，以 `-break-start drive_c\STEP.COM` 啟動）：在除錯器停止狀態下連續
+  呼叫兩次 `vga.snapshot`，兩次回傳的 `latch`／暫存器值逐位元組完全
+  相同，之後呼叫 `continue_execution` 行為也正常，兩次呼叫之間除錯器
+  自己回報的 `location` 也完全沒變——確認這個呼叫對 guest／除錯器狀態
+  沒有任何可觀察的副作用。客戶自己提出的區段形狀（兩個 Mode X 頁面最
+  下方 30 列，plane offset 分別為 `0x3520`／`0x7520`，各 2,400 bytes，
+  四個 plane 都要；以及兩個完整頁面 `0x0000`／`0x4000`，各 16,000
+  bytes——合計 16 個區段一次呼叫）都各自回報正確的 `returned_length`，
+  故意讓某個區段超出範圍時也正確地被截斷（`returned_length` 小於請求
+  值，而不是報錯）。`STEP.COM` 是本專案自己的最小測試執行檔，停在其進
+  入點、預設文字模式下，並不是客戶自己的 Mode X 遊戲——設計文件驗收計畫
+  裡「真正 Mode X 重繪前後畫面是否一致」這一項，仍需要直接對著那款遊戲
+  才能驗證。
+
+---
+
 ## New capability — `io.write`, whitelisted VGA I/O port writes (2026-09-17)
 
 **English**
