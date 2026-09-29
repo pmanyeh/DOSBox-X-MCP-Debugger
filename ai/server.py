@@ -2,7 +2,9 @@ import base64
 
 from mcp.server.mcpserver import Image, MCPServer
 
+import analysis
 from dosbox_client import DOSBoxClient, DOSBoxClientError
+from knowledge import KnowledgeStore
 from protocol import error as protocol_error
 
 mcp = MCPServer(
@@ -15,6 +17,11 @@ mcp = MCPServer(
 # available for unit tests that don't require a live DOSBox-X instance
 # (tests/test_debugger.py).
 dosbox = DOSBoxClient()
+
+# Agent-side symbol/annotation store (Phase 8C, item 2) -- see
+# ai/knowledge.py. Never touches DOSBox-X or the native bridge; persists to
+# ai/knowledge.local.json (git-ignored) by default.
+knowledge = KnowledgeStore()
 
 
 def _guarded_native(func, *args):
@@ -98,6 +105,46 @@ def read_memory(address: str, length: int) -> dict:
 
 
 @mcp.tool()
+def memory_search(
+    start_address: str,
+    length: int,
+    pattern: list = None,
+    text: str = None,
+    case_sensitive: bool = True,
+    max_matches: int = 1000,
+) -> dict:
+    """
+    Scan real, running DOSBox-X guest memory for a byte pattern or ASCII
+    string, starting at a "SEG:OFF" address, over `length` bytes (1 to
+    0x100000 -- the entire real-mode address space). Built entirely out of
+    repeated read_memory() calls -- no new native bridge method and no
+    second memory-reading mechanism.
+
+    Give exactly one of `pattern` (a list of byte specs: an int 0-255, a
+    2-digit hex string, or "??"/"?"/None for "match any byte" -- e.g.
+    ["B8", "??", "12"]) or `text` (matched as raw ASCII bytes;
+    `case_sensitive=False` matches either letter case).
+
+    Guest memory the native bridge reports as unmapped/inaccessible while
+    scanning is skipped and reported under "unreadable_regions" -- never
+    silently treated as zero bytes or fabricated as a match.
+    `max_matches` (default 1000) bounds the result size; hitting it sets
+    "truncated": true and stops scanning early.
+
+    Result: {"matches": ["SEG:OFF", ...], "scanned_bytes": int,
+    "unreadable_regions": [{"address": "SEG:OFF", "length": int}],
+    "truncated": bool}. Match addresses are canonicalized
+    (segment = linear_address >> 4, offset = linear_address & 0xF) so
+    every match is expressible in "SEG:OFF" form even when it spans a
+    segment boundary.
+    """
+
+    return _guarded_native(
+        analysis.search_memory, dosbox, start_address, length, pattern, text, case_sensitive, max_matches
+    )
+
+
+@mcp.tool()
 def disassemble(address: str, count: int) -> list:
     """
     Disassemble `count` instructions starting at a "SEG:OFF" address from
@@ -105,6 +152,58 @@ def disassemble(address: str, count: int) -> list:
     """
 
     return _guarded_native(dosbox.disassemble, address, count)
+
+
+@mcp.tool()
+def get_call_stack(max_frames: int = 32) -> dict:
+    """
+    Walk the real-mode SS:BP frame-pointer chain from the debugger's
+    current stopped position on the real, running DOSBox-X instance.
+    Built entirely out of get_cpu_state() plus repeated read_memory()
+    calls -- no new native bridge method.
+
+    Assumes a standard PUSH BP / MOV BP,SP prologue and NEAR (same-
+    segment) CALLs, matching this project's own DOS test programs; a FAR
+    call's return address would be misread. Stops once a saved BP is not
+    strictly greater than the current frame's BP (real-mode stacks grow
+    downward) or on unmapped stack memory.
+
+    Result: {"frames": [{"bp": "SS:BP", "return_address": "CS:offset"},
+    ...], "truncated": bool}. `return_address`'s segment is always the
+    current CS -- a near return address carries no segment of its own.
+    """
+
+    return _guarded_native(analysis.get_call_stack, dosbox, max_frames)
+
+
+@mcp.tool()
+def build_control_flow_graph(
+    start_address: str, max_blocks: int = 64, max_instructions_per_block: int = 64
+) -> dict:
+    """
+    Build a control-flow graph on the real, running DOSBox-X instance by
+    recursively walking disassemble() from `start_address`, splitting a
+    new block at every resolvable near JMP/Jcc/CALL/LOOP*/JCXZ and
+    following its target(s). No second disassembler -- entirely reuses
+    the native bridge's own disassembly output.
+
+    Only NEAR, same-segment branches are followed. A block ending in a
+    far/indirect JMP or CALL, or in RET/IRET/INT, has no followed
+    successor -- its "unresolved_transfer" field names which kind of
+    transfer stopped the walk there, never a guessed target. Only
+    explores code already loaded into guest memory; never changes
+    execution state.
+
+    Result: {"blocks": {"SEG:OFF": {"instructions": [...],
+    "successors": ["SEG:OFF", ...], "unresolved_transfer": str|None},
+    ...}, "truncated": bool}. Addresses are canonicalized (segment =
+    linear_address >> 4, offset = linear_address & 0xF), matching
+    memory_search()'s convention.
+    """
+
+    return _guarded_native(
+        analysis.build_control_flow_graph, dosbox, start_address, max_blocks, max_instructions_per_block
+    )
 
 
 @mcp.tool()
@@ -452,6 +551,16 @@ def get_mouse_capture() -> dict:
     capture_frame()'s own reported width/height for the current video
     mode, so a pixel picked from a capture_frame() screenshot can be
     passed straight to click_at() in "guest_pixels" space.
+
+    IMPORTANT: "guest_width"/"guest_height" are the RENDERED (screenshot)
+    size, not necessarily the guest video mode's nominal/native
+    resolution -- DOSBox-X pixel-doubles low-resolution modes for
+    on-screen viewing (e.g. Mode 13h is nominally 320x200 but reports/
+    renders as 640x400 here). Coordinates computed against a native
+    resolution (not an actual capture_frame() screenshot) must be scaled
+    up to this call's actual guest_width/guest_height before being used
+    with move_mouse_absolute()/click_at() -- otherwise they land at half
+    the intended position on both axes for a doubled mode like this.
     """
 
     return _guarded_native(dosbox.get_mouse_capture)
@@ -484,8 +593,10 @@ def move_mouse_absolute(
     DEBUGGER_STOPPED otherwise.
 
     `coordinate_space` is "guest_pixels" (origin top-left, matching
-    capture_frame()'s reported width/height -- see get_mouse_capture())
-    or "normalized" ([0.0, 1.0] x [0.0, 1.0]). Out-of-range coordinates
+    capture_frame()'s reported width/height -- see get_mouse_capture(),
+    including its important caveat that this is screenshot-pixel space,
+    not necessarily the guest video mode's nominal resolution) or
+    "normalized" ([0.0, 1.0] x [0.0, 1.0]). Out-of-range coordinates
     fail with INVALID_PARAMETER unless clamp=true, in which case they
     are clamped to the guest's bounds and the result's "clamped" field
     is true. Fails with ABSOLUTE_MOUSE_UNAVAILABLE if absolute
@@ -644,6 +755,101 @@ def clear_dos_io_log() -> dict:
     """
 
     return _guarded_native(dosbox.clear_dos_io_log)
+
+
+# -- persistent symbol/annotation knowledge store (Phase 8C, item 2) --
+#
+# Agent-side only: never touches DOSBox-X or the native bridge, so none
+# of these tools need _guarded_native -- invalid input raises a plain
+# ValueError, matching this file's existing convention for other
+# purely-parameter-validation failures (e.g. write_io_port's width check).
+
+
+@mcp.tool()
+def set_symbol(address: str, name: str) -> dict:
+    """
+    Give `address` ("SEG:OFF") a name in the agent-side knowledge store
+    (persisted across sessions, never sent to DOSBox-X). Addresses are
+    canonicalized, so any "SEG:OFF" representation of the same linear
+    address finds the same symbol. Result: {"address", "name"}.
+    """
+
+    return knowledge.set_symbol(address, name)
+
+
+@mcp.tool()
+def get_symbol(address: str) -> dict:
+    """
+    Look up the name previously given to `address` via set_symbol().
+    Result: {"address", "name"} -- "name" is null if none was set.
+    """
+
+    return knowledge.get_symbol(address)
+
+
+@mcp.tool()
+def delete_symbol(address: str) -> dict:
+    """
+    Remove the name given to `address`, if any. Result: {"address",
+    "deleted": bool}.
+    """
+
+    return knowledge.delete_symbol(address)
+
+
+@mcp.tool()
+def list_symbols() -> dict:
+    """
+    List every symbol currently in the agent-side knowledge store.
+    Result: {"symbols": [{"address", "name"}, ...]}.
+    """
+
+    return knowledge.list_symbols()
+
+
+@mcp.tool()
+def set_comment(address: str, text: str) -> dict:
+    """
+    Attach a free-text comment to `address` in the agent-side knowledge
+    store (overwrites any existing comment at that address). Result:
+    {"address", "text"}.
+    """
+
+    return knowledge.set_comment(address, text)
+
+
+@mcp.tool()
+def get_comment(address: str) -> dict:
+    """
+    Look up the comment previously set on `address` via set_comment().
+    Result: {"address", "text"} -- "text" is null if none was set.
+    """
+
+    return knowledge.get_comment(address)
+
+
+@mcp.tool()
+def add_xref(from_address: str, to_address: str, kind: str = "call") -> dict:
+    """
+    Record a cross-reference from `from_address` to `to_address` in the
+    agent-side knowledge store. `kind` is one of "call", "jump", "data",
+    "other". Idempotent -- adding the same (from, to, kind) triple again
+    is a no-op. Result: {"from", "to", "kind"} (canonicalized addresses).
+    """
+
+    return knowledge.add_xref(from_address, to_address, kind)
+
+
+@mcp.tool()
+def list_xrefs(address: str, direction: str = "to") -> dict:
+    """
+    List cross-references involving `address`. `direction` is "to"
+    (xrefs pointing at `address`), "from" (xrefs originating at
+    `address`), or "both". Result: {"address", "xrefs": [{"from", "to",
+    "kind"}, ...]}.
+    """
+
+    return knowledge.list_xrefs(address, direction)
 
 
 if __name__ == "__main__":

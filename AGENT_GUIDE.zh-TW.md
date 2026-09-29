@@ -139,7 +139,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 }
 ```
 
-`ai/server.py` 是不受限、通用的工具介面（共 39 個工具，詳見下方），也是
+`ai/server.py` 是不受限、通用的工具介面（共 50 個工具，詳見下方），也是
 一般 agent 使用時應該連線的對象。另外還有兩個 MCP 進入點，用途較為特定、
 較窄，**多數 agent 不應該**連線到它們：
 
@@ -160,7 +160,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 
 ## 可用工具
 
-共 39 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
+共 50 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
 狀態下呼叫，會得到明確的錯誤（見〈[錯誤代碼](#錯誤代碼)〉），而不是卡住或
 悄悄地什麼都不做。
 
@@ -184,7 +184,10 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 | 工具 | 參數 | 回傳 | 前置條件 |
 |---|---|---|---|
 | `read_memory` | `address: "SEG:OFF"`、`length: int` | `{"bytes": [...]}` | 除錯器已停止 |
+| `memory_search` | `start_address: "SEG:OFF"`、`length: int`、`pattern: [byte spec, ...]` 或 `text: str`、`case_sensitive: bool`、`max_matches: int` | `{"matches": ["SEG:OFF", ...], "scanned_bytes", "unreadable_regions", "truncated"}` | 除錯器已停止——完全由重複呼叫 `read_memory`組成（見 [`docs/phase8c-agent-side-analysis-tools-design.md`](docs/phase8c-agent-side-analysis-tools-design.md)），沒有新增原生 bridge 方法 |
 | `disassemble` | `address: "SEG:OFF"`、`count: int` | 反組譯結果清單 | 除錯器已停止 |
+| `get_call_stack` | `max_frames: int`（預設 32） | `{"frames": [{"bp": "SS:BP", "return_address": "CS:offset"}, ...], "truncated": bool}` | 除錯器已停止——透過 `get_cpu_state`／`read_memory` 走訪 SS:BP 堆疊鏈；假設標準的 PUSH BP／MOV BP,SP 前導碼與 NEAR call（見 [`docs/phase8c-agent-side-analysis-tools-design.md`](docs/phase8c-agent-side-analysis-tools-design.md)） |
+| `build_control_flow_graph` | `start_address: "SEG:OFF"`、`max_blocks: int`（預設 64）、`max_instructions_per_block: int`（預設 64） | `{"blocks": {"SEG:OFF": {"instructions", "successors", "unresolved_transfer"}}, "truncated": bool}` | 除錯器已停止——對 `disassemble` 做遞迴走訪，只跟隨 NEAR／同 segment 的分支；far／間接跳轉、RET、INT 都會結束該區塊且不虛構後繼位址 |
 | `write_memory` | `address: "SEG:OFF"`、`data: [0-255 的整數或 2 位十六進位字串, ...]` | 寫入確認 | 除錯器已停止 |
 
 ### 暫存器
@@ -337,6 +340,22 @@ render 狀態），所以可以直接把 `capture_frame` 截圖裡挑到的像�
 1.0]`，原點在左上角。超出範圍的座標若 `clamp=false` 會回傳
 `INVALID_PARAMETER`；`clamp=true` 則會夾到合法範圍內。
 
+**`guest_pixels` 是「螢幕截圖像素空間」，不是遊戲視訊模式的原生／標稱
+解析度——請不要假設兩者相同。** DOSBox-X 自己的顯示層，對低解析度的
+視訊模式會做像素倍增（及／或掃描線倍增）以利螢幕顯示——最典型的例子就是
+Mode 13h（`INT 10h` `AH=00h`、`AL=13h`），它的標稱解析度是 320×200，但
+實際渲染／截圖出來的畫面是 640×400（DOSBox-X 自己的 `dblw`／`dblh`
+渲染旗標把兩個軸都放大了一倍）。`guest_width`／`guest_height` 回報的
+永遠是**渲染後**的尺寸（640×400，跟 `capture_frame` 的輸出一致），
+**絕不是**遊戲的標稱 320×200。如果你自己的工具是依照遊戲的原生／標稱
+解析度去計算目標座標（例如直接讀 VRAM，或是拿 320×200 原生解析度的
+參考圖做比對），而不是依照真正的 `capture_frame` 截圖去計算，那麼在呼叫
+`move_mouse_absolute`／`click_at` 之前，必須自行把座標放大到
+`guest_width`／`guest_height` 的比例——像這種被放大一倍的模式，如果直接
+把原生解析度的數字當成 `"guest_pixels"` 送出去，兩個軸都會剛好落在
+預期位置的一半處。請務必先呼叫 `get_mouse_capture`，並依照它實際回報的
+`guest_width`／`guest_height` 去換算座標，不要假設任何固定的解析度。
+
 **已知限制**：只有在 `get_mouse_capture` 的 `"mode"` 是 `"absolute"` 時，
 絕對座標定位才可用——例如已啟動的客體作業系統，或沒有 virtual-8086 的
 保護模式，會回報 `"relative"`，此時 `move_mouse_absolute`／`click_at`
@@ -437,6 +456,32 @@ handle 式呼叫，所以就算啟用了記錄，這些指令也不會出現在�
 現代 handle API（`AH=3Dh` 等）的程式來測試。寫入的內容本身永遠不會被
 擷取，只有中繼資料——如果需要實際的位元組內容，請自行用 `buffer.linear`
 搭配 `read_memory` 讀取。
+
+### Agent 端知識庫
+
+| 工具 | 參數 | 回傳 | 前置條件 |
+|---|---|---|---|
+| `set_symbol` | `address: "SEG:OFF"`、`name: str` | `{"address", "name"}` | 無——完全不會碰 DOSBox-X |
+| `get_symbol` | `address: "SEG:OFF"` | `{"address", "name"}`（未設定時 `name` 為 `null`） | 無 |
+| `delete_symbol` | `address: "SEG:OFF"` | `{"address", "deleted": bool}` | 無 |
+| `list_symbols` | 無 | `{"symbols": [{"address", "name"}, ...]}` | 無 |
+| `set_comment` | `address: "SEG:OFF"`、`text: str` | `{"address", "text"}` | 無 |
+| `get_comment` | `address: "SEG:OFF"` | `{"address", "text"}`（未設定時 `text` 為 `null`） | 無 |
+| `add_xref` | `from_address: "SEG:OFF"`、`to_address: "SEG:OFF"`、`kind: "call"\|"jump"\|"data"\|"other"`（預設 `"call"`） | `{"from", "to", "kind"}` | 無 |
+| `list_xrefs` | `address: "SEG:OFF"`、`direction: "to"\|"from"\|"both"`（預設 `"to"`） | `{"address", "xrefs": [{"from", "to", "kind"}, ...]}` | 無 |
+
+一個持久化、agent 端（完全不在 DOSBox-X 或原生 bridge 裡）的資料庫，
+記錄 agent 在一次工作階段中學到的符號、註記與交叉引用，讓它不必每次
+都重新推敲同一個位址的意義。預設持久化到 `ai/knowledge.local.json`
+（已加入 `.gitignore`——這是您自己的研究成果，不是專案原始碼）。每個
+位址都會正規化（`segment = linear_address >> 4, offset = linear_address
+& 0xF`），所以 `set_symbol("1234:0100", ...)` 之後用
+`get_symbol("1244:0000")`（或同一個 linear 位址的任何其他 "SEG:OFF"
+寫法）都能查到同一筆資料。`add_xref` 具有冪等性——重複新增同一組
+`(from, to, kind)` 不會產生重複項目。這些工具都不會回傳 DOSBox-X 的
+錯誤代碼（不合法輸入只會產生一般的參數錯誤），因為它們完全不會碰到
+原生 bridge。詳見
+[`docs/phase8c-agent-side-analysis-tools-design.md`](docs/phase8c-agent-side-analysis-tools-design.md)。
 
 ## 錯誤代碼
 

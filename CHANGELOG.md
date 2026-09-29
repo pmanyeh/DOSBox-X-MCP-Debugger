@@ -12,6 +12,340 @@ English and Traditional Chinese together.
 
 ---
 
+## Phase 8E/8F — synthetic mouse writes now update motion counters and take effect without host capture (2026-09-29)
+
+**English**
+
+- Live testing against a real game found two related defects in how
+  `move_mouse_absolute()`/`click_at()` (the AI bridge's synthetic
+  absolute mouse writes, `src/debug/debug_ai.cpp`) interact with
+  DOSBox-X's guest-facing mouse emulation (`src/ints/mouse.cpp`,
+  `include/mouse.h`):
+  - **Phase 8E**: an absolute write only ever updated `mouse.x`/`mouse.y`
+    (read by INT 33h `AH=03h`, "get position"). A guest that instead
+    polls `mouse.mickey_x`/`mickey_y` (`AH=0Bh`, "read motion counters")
+    perceived no movement at all, no matter what position the bridge
+    wrote -- confirmed live against a game whose on-screen cursor sprite
+    never moved across repeated calls to visibly different positions,
+    even with the mouse captured. Fixed by adding
+    `Mouse_AddNormalizedMickeys()` (`mouse.cpp`/`mouse.h`): given the
+    normalized-position delta since the previous bridge write (tracked
+    via the already-existing `g_lastGuestX`/`Y` state in
+    `debug_ai.cpp`), it scales by the driver's own `mouse.max_x`/`max_y`
+    (the same values `Mouse_CursorMoved()`'s own absolute branch uses)
+    and accumulates into `mouse.mickey_x`/`mickey_y` with the identical
+    wraparound clamp `Mouse_CursorMoved()` itself uses, so a guest
+    reading motion counters cannot tell the difference from genuine
+    relative motion that happened to add up to the same delta. No mickey
+    delta is generated for the first-ever write in a session (nothing to
+    diff against yet), matching how a real mouse cannot report motion
+    before its first sample.
+  - **Phase 8F**: `DEBUG_AI_CheckPendingInput()`'s absolute-write branch
+    calls `Mouse_CursorMoved()`, but under the default
+    `mouse_emulation=locked` a second, later check in the same function
+    overwrites `mouse.x`/`y` with a host-cursor proxy whenever
+    `user_cursor_locked` is false. That flag is normally kept in sync
+    with real host mouse capture, but only by `src/gui/sdlmain.cpp`'s
+    real SDL mouse-motion event handler -- which the bridge's synthetic
+    writes never trigger, so it silently stayed at its process-start
+    default (`false`) forever, regardless of how many times
+    `set_mouse_capture(true)` was called. Confirmed live: an isolated
+    test program polling INT 33h `AH=03h` read back the same fixed,
+    unrelated position on every poll regardless of what
+    `move_mouse_absolute()`/`click_at()` sent, with or without capture.
+    Fixed by forcing `user_cursor_locked = true` for the duration of the
+    `Mouse_CursorMoved()` call in `debug_ai.cpp` and restoring its prior
+    value immediately after, rather than permanently altering a flag
+    that three other files (`bios.cpp`, `serialmouse.cpp`,
+    `keyboard.cpp`) also read for unrelated purposes.
+  - Both fixes live entirely in `dosbox-src` (native bridge); no `ai/`
+    (Python MCP layer) changes were needed, since the MCP tool
+    surface/parameters for `move_mouse_absolute`/`click_at` are
+    unchanged -- only what the native write does internally.
+
+**繁體中文**
+
+- 針對真實遊戲的實機測試發現，`move_mouse_absolute()`／`click_at()`
+  （AI 橋接層的合成絕對滑鼠寫入，位於 `src/debug/debug_ai.cpp`）與
+  DOSBox-X 面向客體的滑鼠模擬（`src/ints/mouse.cpp`、
+  `include/mouse.h`）之間有兩個相關的缺陷：
+  - **Phase 8E**：絕對寫入只會更新 `mouse.x`／`mouse.y`（由 INT 33h
+    `AH=03h`「取得位置」讀取）。如果客體改讀 `mouse.mickey_x`／
+    `mickey_y`（`AH=0Bh`「讀取移動計數器」），不管橋接層寫入什麼位置，
+    客體都感覺不到任何移動——這在實機測試中已確認：即使滑鼠已捕捉，
+    重複呼叫到明顯不同的位置，遊戲畫面上的游標圖示也完全不動。修正
+    方式是新增 `Mouse_AddNormalizedMickeys()`（`mouse.cpp`／
+    `mouse.h`）：依照自上次橋接層寫入以來的正規化位置差（透過
+    `debug_ai.cpp` 既有的 `g_lastGuestX`／`Y` 狀態追蹤），乘上驅動程式
+    自己的 `mouse.max_x`／`max_y`（跟 `Mouse_CursorMoved()` 本身絕對
+    座標分支所用的值相同），再用 `Mouse_CursorMoved()` 自己那套折返
+    (wraparound) clamp 累加進 `mouse.mickey_x`／`mickey_y`，讓讀取移動
+    計數器的客體無法分辨這跟「剛好加總出同樣差值的真實相對移動」有
+    什麼不同。一個 session 裡的第一次寫入不會產生 mickey 差值（還沒有
+    前一筆可比對），這跟真實滑鼠在第一次取樣之前無法回報移動的行為
+    一致。
+  - **Phase 8F**：`DEBUG_AI_CheckPendingInput()` 裡處理絕對寫入的分支
+    會呼叫 `Mouse_CursorMoved()`，但在預設的 `mouse_emulation=locked`
+    下，同一個函式裡稍後還有第二段檢查，只要 `user_cursor_locked` 為
+    false，就會用主機游標的代理值覆寫 `mouse.x`／`y`。這個旗標平常
+    只由 `src/gui/sdlmain.cpp` 真正的 SDL 滑鼠移動事件處理器同步——而
+    橋接層的合成寫入從不會觸發它，導致它從程式啟動起就一直維持預設值
+    （`false`），不管呼叫了幾次 `set_mouse_capture(true)` 都一樣。實機
+    確認：一支獨立的測試程式持續輪詢 INT 33h `AH=03h`，不管
+    `move_mouse_absolute()`／`click_at()` 送出什麼、也不管有沒有捕捉，
+    每次讀回的都是同一個固定、不相關的位置。修正方式是在
+    `debug_ai.cpp` 呼叫 `Mouse_CursorMoved()` 期間暫時把
+    `user_cursor_locked` 強制設為 `true`，呼叫結束後立刻還原成原本的
+    值，而不是永久改動這個另外三個檔案（`bios.cpp`、
+    `serialmouse.cpp`、`keyboard.cpp`）也會因為不相關用途而讀取的
+    旗標。
+  - 這兩個修正完全位於 `dosbox-src`（原生橋接層）之內；`ai/`（Python
+    MCP 層）不需要任何改動，因為 `move_mouse_absolute`／`click_at` 的
+    MCP 工具介面／參數完全沒變——改變的只是原生寫入內部的實際行為。
+
+---
+
+## Documentation clarification — `guest_pixels` vs. native video-mode resolution (2026-09-19)
+
+**English**
+
+- A downstream integration reported that the bridge "reports 640x400
+  but the effective game screen is 320x200," requiring their own
+  tooling to double every mouse coordinate before calling
+  `move_mouse_absolute`/`click_at`. Investigated by re-deriving the
+  exact arithmetic against `dosbox-src/src/ints/mouse.cpp` (DOS's real
+  INT 33h mouse-driver coordinate convention) rather than assuming --
+  **not a code bug**. For Mode 13h, DOSBox-X's own display layer
+  doubles both axes for on-screen rendering (`render.src.dblw`/`dblh`),
+  so `get_mouse_capture()`'s `guest_width`/`guest_height` correctly
+  reports 640x400 -- the RENDERED/screenshot size, matching
+  `capture_frame()`'s own output, exactly as designed
+  (`docs/phase7b-mouse-capture-and-absolute-input-design.md`). Working
+  through the exact fractions in `ResolveAbsoluteTarget()`/
+  `Mouse_CursorMoved()` confirms both axes resolve correctly and
+  proportionally when the input coordinates are genuinely
+  screenshot-relative. The downstream integration's coordinates instead
+  came from analysis against the game's native 320x200 resolution
+  (e.g. reading VRAM directly), so passing them straight through as
+  `"guest_pixels"` landed at exactly half the intended position on both
+  axes -- a caller-side coordinate-space mismatch, not a defect in the
+  conversion math.
+- Resolution: documentation-only, no code changed and no
+  `dosbox-x.exe` rebuild needed. `AGENT_GUIDE.md`/`.zh-TW.md` (the
+  "Mouse capture & absolute positioning" section),
+  `ai/dosbox_client.py`'s `get_mouse_capture()`/`move_mouse_absolute()`
+  docstrings, `ai/server.py`'s corresponding MCP tool docstrings, and
+  `docs/phase7b-mouse-capture-and-absolute-input-design.md` (new "Known
+  caveat" subsection) now state explicitly that `guest_width`/
+  `guest_height` is the RENDERED size, which can be a multiple of the
+  guest video mode's nominal resolution for low-resolution modes, and
+  that native-resolution-derived coordinates must be scaled to the
+  actual reported `guest_width`/`guest_height` before use.
+
+**繁體中文**
+
+- 有下游整合方回報，橋接層「回報 640×400，但有效遊戲畫面是
+  320×200」，導致他們自己的工具必須在呼叫 `move_mouse_absolute`／
+  `click_at` 之前把每個滑鼠座標都放大兩倍。這次調查是直接對照
+  `dosbox-src/src/ints/mouse.cpp`（DOS 真正的 INT 33h 滑鼠驅動座標慣例）
+  重新推導精確的分數運算，而不是用猜的——**結論是這不是程式碼的
+  bug**。對 Mode 13h 而言，DOSBox-X 自己的顯示層為了螢幕顯示，會把
+  兩個軸都放大一倍（`render.src.dblw`／`dblh`），所以
+  `get_mouse_capture()` 回報的 `guest_width`／`guest_height` 是 640×400
+  完全正確——這是**渲染後（螢幕截圖）的尺寸**，跟 `capture_frame()`
+  的輸出一致，完全符合當初的設計
+  （`docs/phase7b-mouse-capture-and-absolute-input-design.md`）。仔細
+  算過 `ResolveAbsoluteTarget()`／`Mouse_CursorMoved()` 裡的精確分數後
+  確認：只要輸入座標真的是「螢幕截圖相對」座標，兩個軸都能正確、等比例
+  地換算。而這個下游整合方的座標，其實是依照遊戲的原生 320×200 解析度
+  分析出來的（例如直接讀 VRAM），把這種原生解析度的數字直接當成
+  `"guest_pixels"` 送出去，兩個軸自然都會落在預期位置的一半處——這是
+  呼叫端座標空間認知落差，不是換算公式本身的缺陷。
+- 處理方式：純文件修正，沒有改動任何程式碼，也不需要重新編譯
+  `dosbox-x.exe`。`AGENT_GUIDE.md`／`.zh-TW.md`（「滑鼠捕獲狀態與絕對
+  座標定位」章節）、`ai/dosbox_client.py` 的 `get_mouse_capture()`／
+  `move_mouse_absolute()` docstring、`ai/server.py` 對應的 MCP 工具
+  docstring，以及 `docs/phase7b-mouse-capture-and-absolute-input-design.md`
+  （新增的「已知注意事項」小節），現在都明確寫出 `guest_width`／
+  `guest_height` 是**渲染後**的尺寸，在低解析度模式下可能是遊戲原生
+  解析度的倍數，且依照原生解析度算出來的座標，必須先換算成實際回報的
+  `guest_width`／`guest_height` 比例，才能拿去使用。
+
+---
+
+## Phase 8C — agent-side reverse-engineering tools: memory search, knowledge store, call-stack unwinding, control-flow graph (2026-09-19)
+
+**English**
+
+- Added four agent-side capabilities aimed at closing the gap between
+  "inspect one instant of the guest" (everything through Phase 8A) and
+  "accumulate reverse-engineering knowledge across a session" -- see
+  `docs/phase8c-agent-side-analysis-tools-design.md` for the full design
+  and `ai/Phase8C.md` for exact scope/status. None of these are native
+  bridge methods and none required a `dosbox-x.exe` rebuild: all four are
+  built entirely by composing the existing native protocol
+  (`memory.read`, `code.disassemble`, `cpu.get`) from the Python side, an
+  explicit architecture decision to avoid a second CPU/disassembler/
+  memory-reading mechanism.
+- **`memory_search`** (`ai/analysis.py`): scans real, running DOSBox-X
+  guest memory for a byte pattern (with `??`/`?`/`None` wildcards) or an
+  ASCII string (optionally case-insensitive), starting at a "SEG:OFF"
+  address over up to the entire real-mode address space (0x100000
+  bytes). Crosses segment boundaries by always reading to the end of the
+  current segment first, then stepping the segment forward by one full
+  0x10000-byte chunk (0x1000 paragraphs) per subsequent read -- this can
+  never trigger the native bridge's own 16-bit offset wraparound within
+  one `memory.read` call. A match straddling a chunk boundary is found
+  via a sliding-window carry of the previous chunk's tail bytes, and
+  reported using a canonicalized `linear_address >> 4 : linear_address &
+  0xF` address (unambiguous even when the match's "natural" segment
+  would need an offset above 0xFFFF). Guest memory the native bridge
+  reports `MEMORY_ERROR` for while scanning is skipped and reported
+  under `"unreadable_regions"`, never treated as zero bytes or
+  fabricated as a match, per this project's "no fake data" rule.
+- **A persistent symbol/annotation knowledge store** (`ai/knowledge.py`'s
+  `KnowledgeStore`, exposed as eight MCP tools: `set_symbol`/
+  `get_symbol`/`delete_symbol`/`list_symbols`, `set_comment`/
+  `get_comment`, `add_xref`/`list_xrefs`): lets an agent name an address,
+  attach a free-text comment, or record a cross-reference, persisted to
+  `ai/knowledge.local.json` (git-ignored) across sessions. Addresses are
+  canonicalized the same way as `memory_search()`'s match addresses, so
+  any "SEG:OFF" spelling of the same linear address finds the same
+  entry. Lives entirely on the agent side -- never inside DOSBox-X or the
+  native bridge -- so none of its eight tools are wrapped in
+  `_guarded_native()`; bad input raises a plain `ValueError`, matching
+  `write_io_port()`'s existing convention.
+- **`get_call_stack`** (`ai/analysis.py`): walks the real-mode `SS:BP`
+  frame-pointer chain from the debugger's current stopped position (one
+  `cpu.get` call plus repeated `read_memory` calls), the same manual
+  technique a human doing real-mode stack unwinding already uses. Stated
+  limitation: assumes a standard `PUSH BP`/`MOV BP,SP` prologue and NEAR
+  (same-segment) `CALL`s, matching this project's own DOS test programs
+  -- a FAR call's 4-byte return address would be misread as two
+  unrelated 2-byte fields, since 16-bit real-mode code has no formal
+  frame-pointer metadata to consult instead. Stops once a saved `BP` is
+  not strictly greater than the current frame's `BP` (real-mode stacks
+  grow downward) or on unmapped stack memory.
+- **`build_control_flow_graph`** (`ai/analysis.py`): recursively walks
+  `code.disassemble` from a starting address, splitting a new block at
+  every resolvable near `JMP`/`Jcc`/`CALL`/`LOOP*`/`JCXZ` and following
+  its target(s) -- no second disassembler. Before writing the text
+  parser, `dosbox-src/src/debug/debug_disasm.cpp` was read directly to
+  confirm the exact rendering of a resolvable near-branch operand
+  (`case 'J'`: an 8-hex-digit value with no segment/colon, e.g. `"jmp
+  0000E05B"` -- not a `SEG:OFF` pair), so the parser is grounded in the
+  actual disassembler source rather than a guess. A far/indirect
+  transfer, `RET`/`IRET`, or `INT` ends a block with its
+  `"unresolved_transfer"` field naming which kind stopped the walk
+  there ("indirect_or_far_transfer"/"return"/"software_interrupt")
+  rather than fabricating a target. Stated limitation: single-pass, not
+  a full two-pass basic-block partition -- a later-discovered jump
+  target landing inside an earlier block's already-covered range
+  produces an overlapping second block rather than a retroactive split.
+- Tested with 35 new unit tests: `tests/test_analysis.py` (23 total --
+  11 for `memory_search`, 5 for `get_call_stack` against a `StubClient`
+  extended with a configurable `get_cpu_state()`, 7 for
+  `build_control_flow_graph` against a new `CfgStubClient` that models
+  physically-contiguous instruction runs the way a real `disassemble()`
+  call actually decodes them, plus parameter-validation tests) and
+  `tests/test_knowledge.py` (12 -- canonical-address lookup equivalence,
+  delete/list, comments, xref idempotency and direction filtering,
+  invalid `kind`/`direction`, and a real save-then-reload persistence
+  round trip). No live DOSBox-X instance required for any of them,
+  matching `tests/test_debugger.py`'s existing fake-backend testing
+  pattern. Existing `tests/test_debugger.py` regression (17 tests)
+  reconfirmed alongside them.
+- Interrupt-level call tracing (exposing `BPINT`-equivalent tracing
+  through the MCP layer) remains deliberately deferred to a separate
+  Phase 8D, since -- unlike this phase's four items -- it requires a
+  native bridge change and a `dosbox-x.exe` rebuild. `vga.watch_writes`
+  remains the separately reserved "Phase 8B" from the Phase 8A entry
+  below and is untouched here.
+- `AGENT_GUIDE.md`/`.zh-TW.md` and `README.md`/`.zh-TW.md` updated to 50
+  tools, with `memory_search`/`get_call_stack`/`build_control_flow_graph`
+  added to the "Memory & disassembly" tool table, a new "Agent-side
+  knowledge store" section for the eight knowledge tools, and an updated
+  Phase 8C capability row.
+
+**繁體中文**
+
+- 新增四項 agent 端能力，目標是補上「檢視客體某一瞬間的狀態」（Phase
+  8A 為止的一切）與「在一次工作階段中持續累積逆向工程知識」之間的落差
+  ——完整設計見 `docs/phase8c-agent-side-analysis-tools-design.md`，確切
+  範疇／狀態見 `ai/Phase8C.md`。這四項都不是原生 bridge 方法，也都不需要
+  重新編譯 `dosbox-x.exe`：全部都是在 Python 端重複組合既有的原生協定
+  （`memory.read`、`code.disassemble`、`cpu.get`）而成，這是一個明確的
+  架構決定，目的是避免引入第二套 CPU／反組譯／記憶體讀取機制。
+- **`memory_search`**（`ai/analysis.py`）：在真實、正在執行中的 DOSBox-X
+  客體記憶體裡，從一個 "SEG:OFF" 位址開始，搜尋一段位元組樣式（支援
+  `??`／`?`／`None` 萬用字元）或一段 ASCII 字串（可選擇不分大小寫），
+  搜尋範圍最大可涵蓋整個 real-mode 位址空間（0x100000 位元組）。跨越
+  segment 邊界的做法是：一律先讀到目前 segment 的結尾，接著每次都以完整
+  一個 0x10000 位元組的區塊（0x1000 個 paragraph）往前推進 segment——這樣
+  就不可能在單次 `memory.read` 呼叫中觸發原生 bridge 自己的 16-bit
+  offset 折返。橫跨區塊邊界的比對，透過保留上一個區塊尾端位元組的滑動
+  視窗（carry）來偵測，回報時一律轉換成正規化的 `linear_address >> 4 :
+  linear_address & 0xF` 位址（即使比對結果「自然的」segment 會需要超過
+  0xFFFF 的 offset，這種表示法依然明確無歧義）。掃描過程中若原生 bridge
+  回報 `MEMORY_ERROR`（記憶體未對應／無法存取），該區塊會被跳過並記錄在
+  `"unreadable_regions"` 裡，不會被當成全零位元組，也不會被虛構成比對
+  結果，符合本專案「不使用虛構資料」的原則。
+- **一個持久化的符號／註記知識庫**（`ai/knowledge.py` 的
+  `KnowledgeStore`，以八個 MCP 工具暴露：`set_symbol`／`get_symbol`／
+  `delete_symbol`／`list_symbols`、`set_comment`／`get_comment`、
+  `add_xref`／`list_xrefs`）：讓 agent 可以替一個位址命名、附加自由文字
+  註記，或記錄交叉引用，並跨工作階段持久化到 `ai/knowledge.local.json`
+  （已加入 `.gitignore`）。位址正規化方式與 `memory_search()` 的比對結果
+  相同，所以同一個 linear 位址的任何 "SEG:OFF" 寫法都能查到同一筆資料。
+  完全存在於 agent 端——絕不進入 DOSBox-X 或原生 bridge——所以這八個工具
+  都沒有包在 `_guarded_native()` 裡；不合法的輸入會產生一般的
+  `ValueError`，沿用 `write_io_port()` 既有的慣例。
+- **`get_call_stack`**（`ai/analysis.py`）：從除錯器目前的停止位置開始，
+  走訪 real-mode 的 `SS:BP` 堆疊鏈（一次 `cpu.get` 呼叫加上重複的
+  `read_memory` 呼叫），這正是人類手動進行 real-mode 堆疊回溯時使用的
+  技巧。已聲明的限制：假設標準的 `PUSH BP`／`MOV BP,SP` 前導碼與 NEAR
+  （同 segment）的 `CALL`，這與本專案自己的 DOS 測試程式一致——FAR call
+  的 4 位元組返回位址會被誤讀成兩個不相關的 2 位元組欄位，因為 16-bit
+  real-mode 程式碼並沒有正式的 frame-pointer 中繼資料可供分辨這兩種情況。
+  當某個保存的 `BP` 不嚴格大於目前這一層的 `BP` 時（real-mode 堆疊往
+  低位址成長）就會停止，或是遇到無法存取的堆疊記憶體時也會停止。
+- **`build_control_flow_graph`**（`ai/analysis.py`）：從一個起始位址開始
+  遞迴走訪 `code.disassemble`，在每個可解析的 near `JMP`／`Jcc`／
+  `CALL`／`LOOP*`／`JCXZ` 處分割出新的區塊並跟隨其目標——沒有第二套
+  反組譯器。在寫文字解析器之前，直接讀取了 `dosbox-src/src/debug/
+  debug_disasm.cpp` 原始碼，確認可解析的 near 分支運算元的確切呈現方式
+  （`case 'J'`：一個 8 位十六進位數字，沒有 segment、沒有冒號，例如
+  `"jmp 0000E05B"`——不是 "SEG:OFF" 的形式），讓解析邏輯建立在真實的
+  反組譯器原始碼上，而不是用猜的。far／間接跳轉、`RET`／`IRET` 或 `INT`
+  都會結束一個區塊，其 `"unresolved_transfer"` 欄位會註明是哪一種
+  （`"indirect_or_far_transfer"`／`"return"`／`"software_interrupt"`）
+  中斷了走訪，而不是虛構一個目標。已聲明的限制：這是單一遍歷，不是完整
+  的兩遍基本區塊切割——如果之後才發現的跳躍目標，落在某個較早的區塊
+  已經涵蓋的範圍中間，會產生一個內容重疊的第二個區塊，而不是回頭去
+  切割前一個區塊。
+- 新增 35 個單元測試：`tests/test_analysis.py`（共 23 個——11 個測試
+  `memory_search`、5 個針對擴充了可設定 `get_cpu_state()` 的
+  `StubClient` 測試 `get_call_stack`、7 個針對新的 `CfgStubClient`
+  測試 `build_control_flow_graph`——`CfgStubClient` 模擬的是實體上連續
+  的指令序列，就跟真正的 `disassemble()` 呼叫解碼記憶體的方式一樣，
+  另外還有參數驗證測試）與 `tests/test_knowledge.py`（12 個——跨不同
+  位址表示法的正規化查詢、刪除／列表、註記、xref 冪等性與方向篩選、
+  不合法的 `kind`／`direction`，以及一次真正的「儲存後重新載入」持久化
+  往返測試）。全部都不需要真正執行中的 DOSBox-X，沿用
+  `tests/test_debugger.py` 既有的「針對假後端測試」慣例。同時重新確認
+  既有的 `tests/test_debugger.py` 回歸測試（17 項）仍然通過。
+- 中斷層級的呼叫追蹤（在 MCP 層暴露相當於 `BPINT` 的追蹤能力）仍然刻意
+  延後到另一個獨立的 Phase 8D，因為——與本階段這四項不同——它需要修改
+  原生 bridge 並重新編譯 `dosbox-x.exe`。`vga.watch_writes` 仍然是下面
+  Phase 8A 條目中另外保留的「Phase 8B」，本次未觸碰。
+- `AGENT_GUIDE.md`／`.zh-TW.md` 與 `README.md`／`.zh-TW.md` 已更新為 50
+  個工具，在「記憶體與反組譯」工具表中加入
+  `memory_search`／`get_call_stack`／`build_control_flow_graph`，新增
+  一個「Agent 端知識庫」章節說明八個知識庫工具，並更新了 Phase 8C
+  能力列表。
+
+---
+
 ## Phase 8A — `vga.snapshot`, a side-effect-free VGA VRAM read (2026-09-18)
 
 **English**

@@ -39,6 +39,12 @@ scratchpad/
 .env
 .env.*
 
+# Phase 8C agent-side knowledge store (ai/knowledge.py's default path):
+# an agent's own symbols/comments/xrefs for whatever target program it is
+# currently reverse-engineering -- user/session-specific findings, never
+# project source.
+ai/knowledge.local.json
+
 # Ad hoc local "run copies" of the built DOSBox-X binary (dosbox-x.exe,
 # .pdb, and its full runtime asset set), made at the repo root for manual
 # testing convenience -- e.g. build-memory/, build-selector/. The real

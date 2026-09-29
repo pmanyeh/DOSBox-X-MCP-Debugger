@@ -210,6 +210,42 @@ unreachable. `guest_width`/`guest_height` use the `render.src`
 computation above; `null` only if `render.src.width/height` are
 themselves `0` (no video mode set yet, i.e. very early boot).
 
+### Known caveat: `guest_pixels` is screenshot space, not the video mode's nominal resolution (field report, 2026-09-19)
+
+A downstream integration reported that the bridge "reports 640x400 but
+the effective game screen is 320x200," requiring their own tooling to
+double every coordinate before calling `move_absolute`/`click_at`. Root
+cause, confirmed by re-deriving the exact arithmetic against
+`dosbox-src/src/ints/mouse.cpp` rather than assuming: **not a bug in
+this file's formula.** For Mode 13h, `render.src.dblw`/`dblh` are both
+`true` (`render.cpp`'s low-res upscale heuristic: `width<370 &&
+height<280` doubles both axes), giving `guest_width=640,
+guest_height=400` -- while DOS's own real INT 33h mouse driver
+convention for this mode (`Mouse_AfterNewVideoMode()`, `mouse.cpp:1449-
+1495`) is `mouse.max_x=639` (also doubled, coincidentally matching the
+render doubling exactly) and `mouse.max_y=199` (NOT doubled). Working
+through `ResolveAbsoluteTarget()`'s exact fractions
+(`normX=px/639,normY=py/399`, then `Mouse_CursorMoved`'s
+`mouse.x=normX*639, mouse.y=normY*199`) shows both axes resolve
+correctly and proportionally when the caller's `(px,py)` is genuinely a
+screenshot-relative (640x400) coordinate, e.g. from an actual
+`capture_frame()` output -- X resolves to an exact identity
+(`mouse.x==px`) and Y resolves to the correct proportional scaling
+(`mouse.y≈py/2`, matching the real 400-vs-200 relationship). The
+downstream integration's actual coordinates came from something other
+than a `capture_frame()` screenshot (analysis against the game's native
+320x200 resolution), so passing them straight through as `guest_pixels`
+landed at exactly half the intended position on both axes -- the
+observed "needs doubling" symptom is a caller-side coordinate-space
+mismatch, not an error in this design's conversion math. Resolution:
+documentation-only (`AGENT_GUIDE.md`/`.zh-TW.md`,
+`ai/dosbox_client.py`/`ai/server.py` docstrings) now states explicitly
+that `guest_width`/`guest_height` is the RENDERED size, which can be a
+multiple of the guest video mode's nominal resolution, and that
+native-resolution-derived coordinates must be scaled to the actual
+reported `guest_width`/`guest_height` before use -- no code change was
+made or needed.
+
 ## `last_guest_x`/`last_guest_y`
 
 Tracked as two plain (non-atomic) `double`s local to `debug_ai.cpp`,

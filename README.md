@@ -16,12 +16,12 @@ memory changes, and reproducing input-dependent behavior.
 
 ## What it enables
 
-The current general-purpose MCP interface exposes **37 tools** across the
+The current general-purpose MCP interface exposes **50 tools** across the
 debugging workflow:
 
 | Area | Examples |
 | --- | --- |
-| Inspect | CPU state, registers, memory, current instruction, disassembly |
+| Inspect | CPU state, registers, memory, current instruction, disassembly, memory pattern/string search, call-stack unwinding, control-flow graph construction |
 | Control | Breakpoints, stepping, pause/continue, bounded execution traces |
 | Observe | Byte-change watchpoints, guest frame capture, DOS file I/O events |
 | Interact | Keyboard and mouse injection, capture state, dispatch receipts |
@@ -50,7 +50,7 @@ That makes the project useful for work such as:
 
 > [!IMPORTANT]
 > This is an **engineering preview**, not a turnkey autonomous reverse-engineering
-> product. The native bridge and the current 37-tool general-purpose interface
+> product. The native bridge and the current 50-tool general-purpose interface
 > are actively developed and have been verified through phase-specific live
 > tests. The earlier formal **Phase 5C bounded-agent acceptance audit remains
 > NOT PASS (3/4 composed evidence)** and is preserved unchanged as an honest
@@ -85,7 +85,7 @@ disassembly are backed by the native DOSBox-X debugger mechanisms.
 
 This section covers the bounded Phase 5C research surface specifically
 (used for this project's own controlled acceptance testing). For the
-general-purpose, unbounded 39-tool surface a normal agent should actually
+general-purpose, unbounded 50-tool surface a normal agent should actually
 connect to, see the [AI Agent Usage Guide](AGENT_GUIDE.md).
 
 The current bounded Phase 5C surface exposes 12 tools:
@@ -123,12 +123,15 @@ bridge, and must not change DOSBox-X state.
 Development has progressed through **Phase 8** (see [`CHANGELOG.md`](CHANGELOG.md)
 for the full, phase-by-phase history, in English and Traditional Chinese
 together). The general-purpose, unbounded MCP surface described in the
-[AI Agent Usage Guide](AGENT_GUIDE.md) -- 39 tools spanning debugger state,
+[AI Agent Usage Guide](AGENT_GUIDE.md) -- 50 tools spanning debugger state,
 memory/registers/VGA I/O ports, a side-effect-free VGA VRAM snapshot,
 breakpoints (including byte-change memory watchpoints), execution control,
 keyboard/mouse input injection, frame capture, mouse capture and absolute
 positioning, input dispatch receipts, bounded execution tracing around a
-stop, and a DOS file I/O event log -- is the current, actively developed
+stop, a DOS file I/O event log, and a set of agent-side reverse-
+engineering tools (memory pattern/string search, call-stack unwinding,
+a persistent symbol/annotation store, and recursive-descent control-flow
+graph construction) -- is the current, actively developed
 way to use this project. The bounded
 12-tool Phase 5C surface described above under "Agent-visible tools" remains
 a separate, narrower research surface used only for this project's own
@@ -147,6 +150,7 @@ controlled acceptance testing.
 | 7E | A DOS file I/O event log (`open`/`close`/`read`/`write`/`seek`) recording each call's real post-call result |
 | -- | `io.write`: whitelisted VGA I/O port writes (CRTC/Sequencer/Graphics Controller/Attribute Controller/DAC/Misc Output/Feature Control ports only), so an agent stopped at a breakpoint can e.g. switch the VGA read plane -- something `memory.write` cannot do, since it never reaches I/O space |
 | 8A | `vga.snapshot`: a side-effect-free VGA VRAM read -- multiple plane/offset/length regions plus the latch and Sequencer/Graphics Controller/CRTC registers, all from one consistent instant, bypassing the CPU's `A000:xxxx` read path entirely so it cannot itself mutate the latch or require a read-plane switch first |
+| 8C | Four agent-side (no new native bridge method) reverse-engineering tools: `memory_search` (byte-pattern/ASCII-string scan with `??` wildcards, built from repeated `read_memory` calls), a persistent symbol/comment/xref knowledge store (`set_symbol`/`get_symbol`/`list_symbols`/`set_comment`/`get_comment`/`add_xref`/`list_xrefs`), `get_call_stack` (SS:BP frame-chain walk), and `build_control_flow_graph` (recursive-descent walk over `disassemble`, following only resolvable near branches) -- see `docs/phase8c-agent-side-analysis-tools-design.md` |
 
 Three native-bridge bugs found and fixed along the way, each documented in
 `CHANGELOG.md`: a Windows double-bind risk when two DOSBox-X instances listen
@@ -176,7 +180,7 @@ stopped state through `get_debug_status`.
 
 This result is preserved as a historical acceptance-audit snapshot rather than
 hidden or repeatedly rerun until a pass. It covers the bounded, 12-tool Phase
-5C surface specifically -- the current 39-tool general-purpose surface did not
+5C surface specifically -- the current 50-tool general-purpose surface did not
 exist yet at the time of this audit and has not itself been put through an
 equivalent formal acceptance process.
 

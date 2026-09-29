@@ -676,6 +676,22 @@ class DOSBoxClient:
         mode (both derive from the same DOSBox-X render state) -- use
         them to convert a pixel picked from a capture_frame() screenshot
         into click_at()'s "guest_pixels" coordinate space directly.
+
+        IMPORTANT: "guest_width"/"guest_height" are the RENDERED
+        (screenshot) size, not necessarily the guest video mode's
+        nominal/native resolution -- DOSBox-X's own display layer
+        pixel-doubles (and/or line-doubles) low-resolution modes for
+        on-screen viewing. Mode 13h (INT 10h AH=00h,AL=13h), for
+        example, is nominally 320x200 but reports/renders as 640x400
+        here. If your own coordinates come from something other than an
+        actual capture_frame() screenshot (e.g. reading VRAM directly,
+        or matching against native-resolution reference images), scale
+        them up to this call's actual guest_width/guest_height first --
+        do not assume any fixed resolution, and do not pass
+        native-resolution numbers straight through (they will land at
+        exactly half the intended position on both axes for a doubled
+        mode like this).
+
         "last_guest_x"/"last_guest_y" are the bridge's last successfully
         dispatched position, not a claim about what the guest program
         actually read."""
@@ -710,7 +726,9 @@ class DOSBoxClient:
 
         `coordinate_space` is "guest_pixels" (origin top-left, matching
         capture_frame()'s reported width/height -- see
-        get_mouse_capture()) or "normalized" ([0.0, 1.0] x [0.0, 1.0]).
+        get_mouse_capture(), including its important caveat that this is
+        screenshot-pixel space, not necessarily the guest video mode's
+        nominal resolution) or "normalized" ([0.0, 1.0] x [0.0, 1.0]).
         Out-of-range coordinates raise DOSBoxProtocolError
         (INVALID_PARAMETER) unless `clamp=True`, in which case they are
         clamped to the guest's bounds and the result's "clamped" field is

@@ -150,7 +150,7 @@ Example MCP server config (adjust paths to your clone location):
 }
 ```
 
-`ai/server.py` is the unbounded, general-purpose tool surface (39 tools,
+`ai/server.py` is the unbounded, general-purpose tool surface (50 tools,
 listed below) and is the one intended for normal agent use. Two other MCP
 entry points exist for specific, narrower purposes and are **not** what
 most agents should connect to:
@@ -173,7 +173,7 @@ rather than a `DOSBOX_NOT_CONNECTED` error.
 
 ## Available tools
 
-39 tools, grouped by what they do. "Precondition" is the debugger state a
+50 tools, grouped by what they do. "Precondition" is the debugger state a
 call requires; calling it in the wrong state returns a specific error
 (see [Error codes](#error-codes)) rather than blocking or silently doing
 nothing.
@@ -198,7 +198,10 @@ nothing.
 | Tool | Parameters | Returns | Precondition |
 |---|---|---|---|
 | `read_memory` | `address: "SEG:OFF"`, `length: int` | `{"bytes": [...]}` | debugger stopped |
+| `memory_search` | `start_address: "SEG:OFF"`, `length: int`, `pattern: [byte spec, ...]` or `text: str`, `case_sensitive: bool`, `max_matches: int` | `{"matches": ["SEG:OFF", ...], "scanned_bytes", "unreadable_regions", "truncated"}` | debugger stopped -- built entirely from repeated `read_memory` calls (see [`docs/phase8c-agent-side-analysis-tools-design.md`](docs/phase8c-agent-side-analysis-tools-design.md)), no new native bridge method |
 | `disassemble` | `address: "SEG:OFF"`, `count: int` | list of disassembled instructions | debugger stopped |
+| `get_call_stack` | `max_frames: int` (default 32) | `{"frames": [{"bp": "SS:BP", "return_address": "CS:offset"}, ...], "truncated": bool}` | debugger stopped -- walks the SS:BP frame chain via `get_cpu_state`/`read_memory`; assumes a standard PUSH BP/MOV BP,SP prologue and NEAR calls (see [`docs/phase8c-agent-side-analysis-tools-design.md`](docs/phase8c-agent-side-analysis-tools-design.md)) |
+| `build_control_flow_graph` | `start_address: "SEG:OFF"`, `max_blocks: int` (default 64), `max_instructions_per_block: int` (default 64) | `{"blocks": {"SEG:OFF": {"instructions", "successors", "unresolved_transfer"}}, "truncated": bool}` | debugger stopped -- recursive-descent walk over `disassemble`, following only NEAR/same-segment branches; far/indirect transfers, RET, and INT end a block with no fabricated successor |
 | `write_memory` | `address: "SEG:OFF"`, `data: [int 0-255 or 2-digit hex string, ...]` | write confirmation | debugger stopped |
 
 ### Registers
@@ -365,6 +368,26 @@ here" loop. `"normalized"` space is `[0.0, 1.0] x [0.0, 1.0]`, origin
 top-left. Out-of-range coordinates fail `INVALID_PARAMETER` unless
 `clamp=true`.
 
+**`guest_pixels` is screenshot-pixel space, NOT the guest video mode's
+nominal/native resolution -- do not assume they're the same.** DOSBox-X's
+own display layer pixel-doubles (and/or line-doubles) low-resolution
+video modes for on-screen viewing -- most notably Mode 13h (`INT 10h`
+`AH=00h`,`AL=13h`), whose nominal resolution is 320x200 but whose
+rendered/captured output is 640x400 (both axes doubled by DOSBox-X's own
+`dblw`/`dblh` render flags). `guest_width`/`guest_height` always reports
+the RENDERED (640x400) size, matching `capture_frame`'s own output --
+never the game's nominal 320x200. If your own tooling computes target
+coordinates against the game's native/nominal resolution (e.g. by
+reading VRAM directly, or matching against 320x200-native reference
+images) rather than against an actual `capture_frame` screenshot, you
+must scale those coordinates up to `guest_width`/`guest_height` yourself
+before calling `move_mouse_absolute`/`click_at` -- passing native-
+resolution numbers directly as `"guest_pixels"` will land at exactly
+half the intended position on both axes for a doubled mode like this.
+Always call `get_mouse_capture` first and scale against its actual
+reported `guest_width`/`guest_height` rather than assuming any fixed
+resolution.
+
 **Known limitation**: absolute positioning is only usable when
 `get_mouse_capture`'s `"mode"` reads `"absolute"` -- e.g. a booted guest
 OS or protected mode without virtual-8086 reports `"relative"` instead,
@@ -481,6 +504,33 @@ a bug; test with a program that itself calls the modern handle API
 (`AH=3Dh` etc.) if you need to confirm the log is working. Write
 content is never captured, only metadata -- read `buffer.linear` via
 `read_memory` yourself if you need the actual bytes.
+
+### Agent-side knowledge store
+
+| Tool | Parameters | Returns | Precondition |
+|---|---|---|---|
+| `set_symbol` | `address: "SEG:OFF"`, `name: str` | `{"address", "name"}` | none -- never touches DOSBox-X |
+| `get_symbol` | `address: "SEG:OFF"` | `{"address", "name"}` (`name` is `null` if unset) | none |
+| `delete_symbol` | `address: "SEG:OFF"` | `{"address", "deleted": bool}` | none |
+| `list_symbols` | none | `{"symbols": [{"address", "name"}, ...]}` | none |
+| `set_comment` | `address: "SEG:OFF"`, `text: str` | `{"address", "text"}` | none |
+| `get_comment` | `address: "SEG:OFF"` | `{"address", "text"}` (`text` is `null` if unset) | none |
+| `add_xref` | `from_address: "SEG:OFF"`, `to_address: "SEG:OFF"`, `kind: "call"\|"jump"\|"data"\|"other"` (default `"call"`) | `{"from", "to", "kind"}` | none |
+| `list_xrefs` | `address: "SEG:OFF"`, `direction: "to"\|"from"\|"both"` (default `"to"`) | `{"address", "xrefs": [{"from", "to", "kind"}, ...]}` | none |
+
+A persistent, agent-side (never inside DOSBox-X or the native bridge)
+database of symbols, comments, and cross-references an agent has learned
+during a session, so it doesn't have to rediscover the same address's
+meaning every time. Persists to `ai/knowledge.local.json` by default
+(git-ignored -- your own findings, not project source). Every address is
+canonicalized (`segment = linear_address >> 4, offset = linear_address &
+0xF`), so `set_symbol("1234:0100", ...)` and a later
+`get_symbol("1244:0000")` (or any other "SEG:OFF" spelling of the same
+linear address) find the same entry. `add_xref` is idempotent -- adding
+the same `(from, to, kind)` triple again is a no-op. None of these tools
+can fail with a DOSBox-X error code (bad input raises a plain parameter
+error instead) since none of them reach the native bridge. See
+[`docs/phase8c-agent-side-analysis-tools-design.md`](docs/phase8c-agent-side-analysis-tools-design.md).
 
 ## Error codes
 

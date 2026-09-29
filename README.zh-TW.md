@@ -50,7 +50,7 @@ flowchart LR
 ## Agent 可見的工具
 
 本章節說明的是專門用於受限的 Phase 5C 研究介面（供本專案自己的受控驗收
-測試使用）。若要找一般 agent 應該連線、不受限的 39 個工具通用介面，
+測試使用）。若要找一般 agent 應該連線、不受限的 50 個工具通用介面，
 請見〈[AI Agent 使用說明](AGENT_GUIDE.zh-TW.md)〉。
 
 目前受限的 Phase 5C 介面共暴露 12 個工具：
@@ -89,8 +89,10 @@ Phase 5C 面向 agent 的 MCP 伺服器，刻意**不**暴露暫存器與記憶�
 所描述的一般用途、不受限的 MCP 介面——涵蓋除錯器狀態、記憶體／暫存器／
 VGA I/O port、不會產生副作用的 VGA VRAM 快照、中斷點（含逐位元組變化的
 記憶體監看點）、執行控制、鍵盤／滑鼠輸入注入、螢幕擷取、滑鼠捕捉與絕對
-座標定位、輸入派送回條、圍繞停止點的有界執行追蹤，以及 DOS 檔案 I/O
-事件記錄，共 39 個工具——是目前實際持續開發、建議使用本專案的方式。上面
+座標定位、輸入派送回條、圍繞停止點的有界執行追蹤、DOS 檔案 I/O
+事件記錄，以及一組 agent 端的逆向工程工具（記憶體樣式／字串搜尋、
+呼叫堆疊回溯、持久化符號／註記資料庫，以及遞迴反組譯控制流程圖建構），
+共 50 個工具——是目前實際持續開發、建議使用本專案的方式。上面
 「Agent 可見的工具」章節提到的受限
 12 個工具 Phase 5C 介面，則是另一個較窄的介面，僅供本專案自己的受控驗收
 測試使用。
@@ -108,6 +110,7 @@ VGA I/O port、不會產生副作用的 VGA VRAM 快照、中斷點（含逐位�
 | 7E | DOS 檔案 I/O 事件記錄（`open`／`close`／`read`／`write`／`seek`），記錄每次呼叫真實的呼叫後結果 |
 | -- | `io.write`：白名單內的 VGA I/O port 寫入（僅限 CRTC／Sequencer／Graphics Controller／Attribute Controller／DAC／Misc Output／Feature Control 的 port），讓 agent 停在 breakpoint 時也能例如切換 VGA read plane——這是 `memory.write` 做不到的，因為它碰不到 I/O space |
 | 8A | `vga.snapshot`：不會產生副作用的 VGA VRAM 讀取——一次讀取多個 plane／offset／length 區段，加上 latch 與 Sequencer／Graphics Controller／CRTC 暫存器，全部來自同一個一致的時間點，完全繞過 CPU 的 `A000:xxxx` 讀取路徑，因此不會改動 latch，也不需要事先切換 read plane |
+| 8C | 四項 agent 端（沒有新增原生 bridge 方法）逆向工程工具：`memory_search`（位元組樣式／ASCII 字串掃描，支援 `??` 萬用字元，完全由重複呼叫 `read_memory` 組成）、一個持久化的符號／註記／交叉引用知識庫（`set_symbol`／`get_symbol`／`list_symbols`／`set_comment`／`get_comment`／`add_xref`／`list_xrefs`）、`get_call_stack`（SS:BP 堆疊鏈走訪），以及 `build_control_flow_graph`（對 `disassemble` 做遞迴走訪，只跟隨可解析的 near 分支）——見 `docs/phase8c-agent-side-analysis-tools-design.md` |
 
 過程中也發現並修正了三個原生橋接層的 bug，各自記錄在
 `CHANGELOG.md`：兩個 DOSBox-X 執行個體同時監聽同一個 port 時的
@@ -136,7 +139,7 @@ Windows 雙重綁定風險、在 stdio 被重新導向／接管時除錯器主�
 已經停止。
 
 這項結果被當成歷史性的驗收稽核快照完整保留，而非隱藏或重複執行到
-通過為止。它涵蓋的是受限的 12 個工具 Phase 5C 介面——目前的 39 個工具
+通過為止。它涵蓋的是受限的 12 個工具 Phase 5C 介面——目前的 50 個工具
 一般用途介面在這次稽核當時還不存在，也還沒經過同等規格的正式驗收
 流程。
 
