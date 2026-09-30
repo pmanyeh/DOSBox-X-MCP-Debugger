@@ -139,7 +139,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 }
 ```
 
-`ai/server.py` 是不受限、通用的工具介面（共 50 個工具，詳見下方），也是
+`ai/server.py` 是不受限、通用的工具介面（共 51 個工具，詳見下方），也是
 一般 agent 使用時應該連線的對象。另外還有兩個 MCP 進入點，用途較為特定、
 較窄，**多數 agent 不應該**連線到它們：
 
@@ -160,7 +160,7 @@ MCP 伺服器設定範例（請自行調整成您實際 clone 的路徑）：
 
 ## 可用工具
 
-共 50 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
+共 51 個工具，依功能分類。「前置條件」是該呼叫要求的除錯器狀態；在錯誤的
 狀態下呼叫，會得到明確的錯誤（見〈[錯誤代碼](#錯誤代碼)〉），而不是卡住或
 悄悄地什麼都不做。
 
@@ -317,6 +317,42 @@ dispatch（見下方「輸入 dispatch receipt」）。
 執行時才會觸發的硬體事件驅動）——在除錯器停止時呼叫 `capture_frame`，
 通常會逾時（`EXECUTION_TIMEOUT`）而不是立刻回傳結果。要穩定擷取，請先呼叫
 `continue_execution()`。
+
+### 最終合成畫面擷取
+
+| 工具 | 參數 | 回傳 | 前置條件 |
+|---|---|---|---|
+| `capture_composite` | `format: "png"\|"rgba"`（預設 `"png"`）；以下三者至多擇一：`crop: "viewport"\|"full"`（預設 `"viewport"`）、`game_rect: {"x","y","w","h"}`（guest 原生像素座標）、`rect: {"x","y","w","h"}`（back buffer 像素座標）；`max_width`／`max_height: int`（選填）；`include_source: bool`（預設 `false`） | `format="png"`：中繼資料加上合成畫面（`include_source=true` 時再附上同一個 frame 的 `capture_frame` 影像）；中繼資料包含 `backend`、`target_render_seq`／`presented_render_seq`／`source_frame_match`、`width`／`height`、`crop_rect`、`scaled`，以及 `geometry`（`backbuffer`、`viewport`、`draw`、`render_src`、`guest_native`、`scale`、`aspect_correction`、`fullscreen`、`pixel_shader`） | 客體需在執行中（停止時會逾時）；需為 `output=direct3d` 或 `output=surface` |
+
+回傳的是輸出 backend 的**最終合成畫面**——也就是 DOSBox-X 即將 present
+到螢幕上的那張 back buffer，已經過縮放、濾鏡、pixel shader 與
+letterbox 處理——而且是在 DOSBox-X 內部、present 之前讀回，所以就算有其他
+視窗蓋住 DOSBox-X 也不受影響（主機滑鼠游標不會出現在畫面中）。
+
+**該用哪一個擷取工具：**
+
+| | `capture_frame` | `capture_composite` |
+|---|---|---|
+| 擷取層 | Scaler 之前的 guest 原生畫面 | Backend present 前的最終畫面 |
+| 解析度 | Guest 解析度（mode 13h 為 640×400） | Back buffer 解析度（視窗或全螢幕） |
+| 包含 shader、濾鏡、letterbox | 否 | 是 |
+| 包含 Modern overlay | 否 | 是（M6 之後） |
+| 適合用途 | 比對 DOS framebuffer、CRC、找像素 | 驗收玩家實際看到的畫面、overlay 位置、清晰度 |
+
+**規則：判斷 HiRes 文字是否清晰、位置是否正確，一律使用
+`capture_composite` 搭配 `game_rect` 裁切。** `game_rect` 使用 guest 的
+原生座標（`geometry.guest_native`，mode 13h 為 320×200——不是
+`capture_frame` 的 640×400）；bridge 會依 `geometry.viewport` 換算（左上角
+取 floor、右下角取 ceil）。`crop="full"` 會包含 letterbox／pillarbox 黑邊。
+
+`include_source=true` 會一併回傳**同一個** emulated frame 的
+`capture_frame` 影像；當合成畫面正是由該 frame present 出來時，
+`source_frame_match` 為 `true`。客體畫面靜止時也能立刻擷取——有待處理的
+請求時，renderer 會做一次完整重繪，確保會有一個 frame 被 present。目前只
+支援 `direct3d`（Windows 預設）與 `surface`；其他 backend 會回傳
+`COMPOSITE_UNSUPPORTED_BACKEND`，**絕不會**退回 `capture_frame` 的結果。
+請優先使用 `"png"`：1080p 的 `"rgba"` 只是剛好塞進 8 MiB 上限，更大的畫面
+會回傳 `FRAME_TOO_LARGE`。
 
 ### 滑鼠捕獲狀態與絕對座標定位
 
@@ -502,7 +538,11 @@ handle 式呼叫，所以就算啟用了記錄，這些指令也不會出現在�
 | `INVALID_PARAMETER` | 參數格式錯誤／超出範圍／無法辨識（例如未知的按鍵名稱、錯誤的滑鼠按鍵編號） | 修正參數後再試，不要原樣重試 |
 | `INVALID_ADDRESS` | `"SEG:OFF"`／`"SELECTOR:OFFSET"` 字串格式錯誤 | 修正位址格式 |
 | `INTERNAL_ERROR` | 原生橋接層本身的失敗，例如在非 heavy-debug 建置上設定記憶體監看點 | 除非改變建置／環境，否則無法重試 |
-| `FRAME_TOO_LARGE` | `capture_frame` 編碼後的畫面超過橋接層的大小上限 | 用錯誤訊息裡的 `suggested_max_width`／`suggested_max_height` 重試 |
+| `FRAME_TOO_LARGE` | `capture_frame`／`capture_composite` 編碼後的影像超過橋接層的大小上限 | 用錯誤訊息裡的 `suggested_max_width`／`suggested_max_height` 重試，或縮小裁切範圍 |
+| `CROP_OUT_OF_BOUNDS` | `capture_composite` 的 `crop`／`rect`／`game_rect` 超出 back buffer 或 guest 原生座標範圍，或寬高為 0 | 先用 `crop="full"` 擷取一次取得 `geometry`，再修正矩形 |
+| `COMPOSITE_UNSUPPORTED_BACKEND` | 目前的輸出 backend 不是 `direct3d`／`surface` | 改用 `output=direct3d`（或 `surface`）重新啟動；或在清楚知道它是 scaler 之前畫面的前提下改用 `capture_frame` |
+| `COMPOSITE_UNSUPPORTED_FORMAT` | Back buffer 的像素格式無法轉成 RGBA8888 | 不改顯示設定就無法重試 |
+| `COMPOSITE_DEVICE_LOST` | 整個請求期間 Direct3D device 都處於 lost 狀態（例如切換全螢幕途中） | 稍後重試 |
 | `CAPTURE_UNAVAILABLE` | 呼叫 `set_mouse_capture` 時，目前的畫面輸出後端沒有可控制的捕獲狀態 | 目前本 fork 已知的建置都不會產生這個錯誤 |
 | `ABSOLUTE_MOUSE_UNAVAILABLE` | 呼叫 `move_mouse_absolute`／`click_at` 時，絕對座標定位在客體目前的模式下無法使用 | 先檢查 `get_mouse_capture` 的 `"mode"` 欄位 |
 | `INPUT_RECEIPT_EXPIRED` | `get_input_receipt` 的 `input_sequence` 目前沒有被保留 | 該序號無法重試——已被淘汰，或根本沒發過 |

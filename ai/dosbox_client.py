@@ -204,6 +204,43 @@ class DOSBoxTraceNotFound(DOSBoxClientError):
     code = "TRACE_NOT_FOUND"
 
 
+class DOSBoxCropOutOfBounds(DOSBoxClientError):
+    """capture_composite()'s crop, rect, or game_rect resolved to a
+    rectangle outside the back buffer (or the guest's native grid), or
+    with zero/negative size (see native error code CROP_OUT_OF_BOUNDS,
+    Phase 9A). Check the geometry of a previous full capture first."""
+
+    code = "CROP_OUT_OF_BOUNDS"
+
+
+class DOSBoxCompositeUnsupportedBackend(DOSBoxClientError):
+    """capture_composite() was called while DOSBox-X presents through an
+    output backend with no composite readback path (see native error code
+    COMPOSITE_UNSUPPORTED_BACKEND, Phase 9A). Currently only
+    output=direct3d and output=surface are supported; the message names
+    the active backend. The bridge deliberately never falls back to the
+    pre-scaler capture_frame() image here."""
+
+    code = "COMPOSITE_UNSUPPORTED_BACKEND"
+
+
+class DOSBoxCompositeUnsupportedFormat(DOSBoxClientError):
+    """The backend's back buffer uses a pixel format the bridge cannot
+    convert to RGBA8888 (see native error code
+    COMPOSITE_UNSUPPORTED_FORMAT, Phase 9A)."""
+
+    code = "COMPOSITE_UNSUPPORTED_FORMAT"
+
+
+class DOSBoxCompositeDeviceLost(DOSBoxClientError):
+    """The Direct3D device stayed lost for the whole request timeout, so
+    no frame could be presented or read back (see native error code
+    COMPOSITE_DEVICE_LOST, Phase 9A) -- e.g. during a fullscreen switch
+    or while another program holds exclusive fullscreen. Retry later."""
+
+    code = "COMPOSITE_DEVICE_LOST"
+
+
 _NATIVE_ERROR_MAP = {
     "DEBUGGER_NOT_STOPPED": DOSBoxDebuggerNotStopped,
     "MEMORY_ERROR": DOSBoxMemoryError,
@@ -221,6 +258,10 @@ _NATIVE_ERROR_MAP = {
     "ABSOLUTE_MOUSE_UNAVAILABLE": DOSBoxAbsoluteMouseUnavailable,
     "INPUT_RECEIPT_EXPIRED": DOSBoxInputReceiptExpired,
     "TRACE_NOT_FOUND": DOSBoxTraceNotFound,
+    "CROP_OUT_OF_BOUNDS": DOSBoxCropOutOfBounds,
+    "COMPOSITE_UNSUPPORTED_BACKEND": DOSBoxCompositeUnsupportedBackend,
+    "COMPOSITE_UNSUPPORTED_FORMAT": DOSBoxCompositeUnsupportedFormat,
+    "COMPOSITE_DEVICE_LOST": DOSBoxCompositeDeviceLost,
 }
 
 
@@ -658,6 +699,53 @@ class DOSBoxClient:
         if max_height is not None:
             params["max_height"] = max_height
         return self.request("video.frame.capture", params)
+
+    # -- final composited frame capture (Phase 9A) --
+
+    def capture_composite(
+        self,
+        format: str = "png",
+        crop: Optional[str] = None,
+        rect: Optional[dict] = None,
+        game_rect: Optional[dict] = None,
+        max_width: Optional[int] = None,
+        max_height: Optional[int] = None,
+        include_source: bool = False,
+    ) -> dict:
+        """Capture the output backend's FINAL composed image -- the back
+        buffer DOSBox-X is about to present, after scaling, filtering,
+        pixel shaders and letterboxing -- together with the geometry that
+        maps guest coordinates onto it (see
+        docs/phase9a-composite-capture-design.md). Unlike capture_frame()
+        (the pre-scaler guest image), this is what the player sees.
+
+        At most one of `crop` ("viewport", the default when none is given,
+        or "full" for the whole back buffer), `rect` ({"x","y","w","h"} in
+        back-buffer pixels) and `game_rect` ({"x","y","w","h"} in the
+        guest's native grid, e.g. 320x200 for mode 13h, converted by the
+        bridge from geometry.viewport) may be given. `max_width`/
+        `max_height` downscale nearest-neighbor, preserving aspect ratio.
+        `include_source=True` also returns the capture_frame() image of
+        the SAME emulated frame under "source" (compare
+        source_frame_match).
+
+        Only output=direct3d and output=surface are supported (raises
+        DOSBoxCompositeUnsupportedBackend otherwise). Needs a frame to be
+        presented within the timeout: a guest stopped at a breakpoint or a
+        minimized window raises DOSBoxExecutionTimeout."""
+
+        params = {"format": format, "include_source": bool(include_source)}
+        if crop is not None:
+            params["crop"] = crop
+        if rect is not None:
+            params["rect"] = rect
+        if game_rect is not None:
+            params["game_rect"] = game_rect
+        if max_width is not None:
+            params["max_width"] = max_width
+        if max_height is not None:
+            params["max_height"] = max_height
+        return self.request("video.composite.capture", params)
 
     # -- mouse capture status & absolute positioning (Phase 7B) --
 

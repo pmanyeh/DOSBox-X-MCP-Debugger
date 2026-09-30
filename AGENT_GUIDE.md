@@ -150,7 +150,7 @@ Example MCP server config (adjust paths to your clone location):
 }
 ```
 
-`ai/server.py` is the unbounded, general-purpose tool surface (50 tools,
+`ai/server.py` is the unbounded, general-purpose tool surface (51 tools,
 listed below) and is the one intended for normal agent use. Two other MCP
 entry points exist for specific, narrower purposes and are **not** what
 most agents should connect to:
@@ -173,7 +173,7 @@ rather than a `DOSBOX_NOT_CONNECTED` error.
 
 ## Available tools
 
-50 tools, grouped by what they do. "Precondition" is the debugger state a
+51 tools, grouped by what they do. "Precondition" is the debugger state a
 call requires; calling it in the wrong state returns a specific error
 (see [Error codes](#error-codes)) rather than blocking or silently doing
 nothing.
@@ -342,6 +342,45 @@ timing is driven by hardware events that only fire while the guest is
 actually running) -- calling `capture_frame` while the debugger is
 stopped will usually time out (`EXECUTION_TIMEOUT`) rather than return
 instantly. Call `continue_execution()` first for a reliable capture.
+
+### Composite (final on-screen) capture
+
+| Tool | Parameters | Returns | Precondition |
+|---|---|---|---|
+| `capture_composite` | `format: "png"\|"rgba"` (default `"png"`); at most one of `crop: "viewport"\|"full"` (default `"viewport"`), `game_rect: {"x","y","w","h"}` (guest native pixels), `rect: {"x","y","w","h"}` (back-buffer pixels); `max_width`/`max_height: int` (optional); `include_source: bool` (default `false`) | `format="png"`: metadata plus the composite image (and the `capture_frame` image of the same frame when `include_source=true`); metadata has `backend`, `target_render_seq`/`presented_render_seq`/`source_frame_match`, `width`/`height`, `crop_rect`, `scaled`, and `geometry` (`backbuffer`, `viewport`, `draw`, `render_src`, `guest_native`, `scale`, `aspect_correction`, `fullscreen`, `pixel_shader`) | guest running (a stopped guest times out); `output=direct3d` or `output=surface` |
+
+Returns the output backend's **final composed image** -- the back buffer
+DOSBox-X is about to present, after scaling, filtering, pixel shaders and
+letterboxing -- read inside DOSBox-X right before present, so other
+windows covering DOSBox-X never affect it (the host mouse cursor is not
+part of it).
+
+**Which capture tool to use:**
+
+| | `capture_frame` | `capture_composite` |
+|---|---|---|
+| Layer | Guest image before the scaler | Final image before present |
+| Resolution | Guest render size (mode 13h: 640x400) | Back buffer size (window or fullscreen) |
+| Includes shaders, filtering, letterbox | No | Yes |
+| Includes future Modern overlays | No | Yes |
+| Best for | Checking the DOS framebuffer, CRC, finding pixels | Checking what the player actually sees: overlay position, sharpness |
+
+**Rule: to judge whether on-screen (HiRes) text is sharp or correctly
+positioned, always use `capture_composite` with a `game_rect` crop.**
+`game_rect` is in the guest's native grid (`geometry.guest_native`, e.g.
+320x200 for mode 13h -- not the 640x400 `capture_frame` size); the bridge
+maps it through `geometry.viewport` (top-left floored, bottom-right
+ceiled). `crop="full"` includes letterbox/pillarbox bars.
+
+`include_source=true` also returns the `capture_frame` image of the SAME
+emulated frame; `source_frame_match` is `true` when the composite was
+presented from exactly that frame. A static guest screen still captures
+promptly -- while a request is pending the renderer does one full redraw
+so a frame is presented. Only `direct3d` (the Windows default) and
+`surface` are supported; any other backend fails with
+`COMPOSITE_UNSUPPORTED_BACKEND` -- it never falls back to `capture_frame`.
+Prefer `"png"`: a 1080p `"rgba"` capture only just fits the 8 MiB payload
+cap and anything larger fails with `FRAME_TOO_LARGE`.
 
 ### Mouse capture & absolute positioning
 
@@ -552,7 +591,11 @@ specifically branch on:
 | `INVALID_PARAMETER` | Malformed/out-of-range/unrecognized parameter (e.g. unknown key name, bad mouse button) | Fix the parameter, don't retry as-is |
 | `INVALID_ADDRESS` | Malformed `"SEG:OFF"`/`"SELECTOR:OFFSET"` string | Fix the address format |
 | `INTERNAL_ERROR` | Native bridge failure, e.g. a memory watchpoint on a non-heavy-debug build | Not retryable without changing the build/environment |
-| `FRAME_TOO_LARGE` | `capture_frame`'s encoded frame exceeds the bridge's payload cap | Retry with the `suggested_max_width`/`suggested_max_height` in the error message |
+| `FRAME_TOO_LARGE` | `capture_frame`'s/`capture_composite`'s encoded image exceeds the bridge's payload cap | Retry with the `suggested_max_width`/`suggested_max_height` in the error message, or a smaller crop |
+| `CROP_OUT_OF_BOUNDS` | `capture_composite`'s `crop`/`rect`/`game_rect` falls outside the back buffer or the guest's native grid, or has zero size | Check `geometry` from a `crop="full"` capture and fix the rectangle |
+| `COMPOSITE_UNSUPPORTED_BACKEND` | `capture_composite` called while DOSBox-X presents through a backend other than `direct3d`/`surface` | Relaunch with `output=direct3d` (or `surface`), or use `capture_frame` knowing it is the pre-scaler image |
+| `COMPOSITE_UNSUPPORTED_FORMAT` | The back buffer's pixel format can't be converted to RGBA8888 | Not retryable without changing the display configuration |
+| `COMPOSITE_DEVICE_LOST` | The Direct3D device stayed lost for the whole request (e.g. mid fullscreen switch) | Retry after a moment |
 | `CAPTURE_UNAVAILABLE` | `set_mouse_capture` called but the current video backend has no controllable capture state | Not currently produced by any known build in this fork |
 | `ABSOLUTE_MOUSE_UNAVAILABLE` | `move_mouse_absolute`/`click_at` called but absolute positioning isn't usable in the guest's current mode | Check `get_mouse_capture`'s `"mode"` field first |
 | `INPUT_RECEIPT_EXPIRED` | `get_input_receipt`'s `input_sequence` isn't currently retained | Not retryable for that sequence -- it's evicted, or was never issued |

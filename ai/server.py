@@ -540,6 +540,77 @@ def capture_frame(format: str = "png", max_width: int = None, max_height: int = 
 
 
 @mcp.tool()
+def capture_composite(
+    format: str = "png",
+    crop: str = None,
+    game_rect: dict = None,
+    rect: dict = None,
+    max_width: int = None,
+    max_height: int = None,
+    include_source: bool = False,
+):
+    """
+    Capture the FINAL composed image DOSBox-X is about to present on the
+    real, running instance -- the output backend's back buffer after
+    scaling, filtering, pixel shaders and letterboxing -- plus the
+    geometry needed to map guest coordinates onto it. Never reads the
+    Windows window or desktop, so other windows covering DOSBox-X do not
+    affect it; the host mouse cursor is never included.
+
+    How it differs from capture_frame():
+
+    | | capture_frame | capture_composite |
+    |---|---|---|
+    | Layer | Guest image before the scaler | Final image before present |
+    | Resolution | Guest render size (mode 13h: 640x400) | Back buffer (window/fullscreen) size |
+    | Shaders, filtering, letterbox | No | Yes |
+    | Future Modern overlays | No | Yes |
+    | Use for | DOS framebuffer checks, CRC, finding pixels | What the player actually sees: overlay position, sharpness |
+
+    `format` is "png" (default, returned as a viewable image) or "rgba".
+    Give at most one of: `crop` ("viewport" -- the default, just the
+    game image -- or "full" for the whole back buffer including
+    letterbox bars), `game_rect` ({"x","y","w","h"} in the guest's
+    native grid, e.g. 320x200 for mode 13h -- the bridge converts it
+    using geometry.viewport; prefer this for checking a specific on-screen
+    element), or `rect` ({"x","y","w","h"} in back-buffer pixels).
+    `max_width`/`max_height` downscale nearest-neighbor. With
+    `include_source=True`, the capture_frame() image of the SAME
+    emulated frame is returned as a second image
+    (metadata.source_frame_match tells whether both came from one frame).
+
+    Result metadata includes backend, target/presented render_seq,
+    crop_rect, and geometry {backbuffer, viewport, draw, render_src,
+    guest_native, scale, aspect_correction, fullscreen, pixel_shader}.
+
+    Only output=direct3d and output=surface are supported; other
+    backends fail with COMPOSITE_UNSUPPORTED_BACKEND (never a silent
+    fallback to capture_frame). Needs a frame to be presented within the
+    timeout: a guest stopped at a breakpoint or a minimized window gives
+    EXECUTION_TIMEOUT -- call continue_execution() first. Out-of-range
+    crops fail with CROP_OUT_OF_BOUNDS; oversized payloads with
+    FRAME_TOO_LARGE (use png, a crop, or max_width/max_height).
+    """
+
+    result = _guarded_native(
+        dosbox.capture_composite, format, crop, rect, game_rect, max_width, max_height, include_source
+    )
+    if isinstance(result, dict) and "error" in result:
+        return result
+
+    if format == "png":
+        metadata = {k: v for k, v in result.items() if k not in ("png_base64", "source")}
+        images = [Image(data=base64.b64decode(result["png_base64"]), format="png")]
+        source = result.get("source")
+        if source:
+            metadata["source"] = {"width": source["width"], "height": source["height"]}
+            images.append(Image(data=base64.b64decode(source["png_base64"]), format="png"))
+        return [metadata, *images]
+
+    return result
+
+
+@mcp.tool()
 def get_mouse_capture() -> dict:
     """
     Read DOSBox-X's own mouse-capture state on the real, running DOSBox-X
